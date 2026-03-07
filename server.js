@@ -621,16 +621,17 @@ async function start() {
   console.log(`║  Refresh: Every ${REFRESH_HOURS} hours`);
   console.log("╚══════════════════════════════════════════╝");
 
-  // Initial M3U fetch
-  await refreshM3U();
-
-  // Start Express
+   // Start Express
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
     console.log(`   Manifest:  http://localhost:${PORT}/manifest.json`);
     console.log(`   Health:    http://localhost:${PORT}/health`);
     console.log(`   Landing:   http://localhost:${PORT}/\n`);
 
+  // Initial M3U fetch
+  await refreshM3U();
+
+ 
     // Start background tasks
     setInterval(refreshM3U, REFRESH_MS);
     startKeepAlive();
