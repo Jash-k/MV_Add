@@ -57,31 +57,11 @@ code {
   font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
 }
 
-.code-block {
-  background: #0d1117;
-  border: 1px solid #21262d;
-  border-radius: 8px;
-  overflow-x: auto;
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.code-block::-webkit-scrollbar {
-  height: 6px;
-}
-
-.code-block::-webkit-scrollbar-track {
-  background: #0d1117;
-}
-
-.code-block::-webkit-scrollbar-thumb {
-  background: #30363d;
-  border-radius: 3px;
-}
-
-.step-connector {
-  position: absolute;
-  left: 1.25rem;
-  top: 2.5rem;
-  bottom: -1rem;
-  width: 2px;
-  background: linear-gradient(to bottom, #7b5ea7, transparent);
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
 }

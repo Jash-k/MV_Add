@@ -1,9 +1,3 @@
-# ═══════════════════════════════════════════════════════════
-#  Render Blueprint — One-Click Deploy
-#  Place this file at the ROOT of your GitHub repository
-#  alongside server.js and package.json
-# ═══════════════════════════════════════════════════════════
-
 services:
   - type: web
     name: stremio-m3u-addon
@@ -11,15 +5,12 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: node server.js
-    healthCheckPath: /health
     envVars:
-      - key: M3U_URL
-        sync: false
+      - key: NODE_ENV
+        value: production
       - key: TMDB_API_KEY
         sync: false
       - key: RENDER_EXTERNAL_URL
         sync: false
-      - key: PORT
-        value: 7000
       - key: REFRESH_HOURS
-        value: 6
+        value: "6"
