@@ -1,29 +1,18 @@
 {
-  "name": "react-vite-tailwind",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "name": "stremio-m3u-addon",
+  "version": "2.0.0",
+  "description": "Stremio addon — M3U playlists with TMDB fallback, sort/filter, keep-alive",
+  "main": "server.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "dependencies": {
-    "clsx": "2.1.1",
-    "lucide-react": "^0.577.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "tailwind-merge": "3.4.0"
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
   },
-  "devDependencies": {
-    "@tailwindcss/vite": "4.1.17",
-    "@types/node": "^22.0.0",
-    "@types/react": "19.2.7",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "5.1.1",
-    "tailwindcss": "4.1.17",
-    "typescript": "5.9.3",
-    "vite": "7.2.4",
-    "vite-plugin-singlefile": "2.3.0"
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
