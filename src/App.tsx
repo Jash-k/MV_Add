@@ -1,984 +1,1109 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type {
-  MovieEntry, AddonConfig, StatusResponse, EntriesResponse, FiltersResponse,
-} from './types';
+import { useState, useCallback } from "react";
+import {
+  Copy, Check, ChevronDown, ChevronRight, ExternalLink,
+  Play, RefreshCw, Shield, Zap, Database, Clock, Search,
+  Filter, Star, Film, GitBranch, Terminal, Globe,
+  BookOpen, Rocket, Settings, Key, Link2, FileText,
+  Heart, Coffee
+} from "lucide-react";
 
-const API: string = import.meta.env.VITE_API_URL ?? '';
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((err as { error: string }).error || res.statusText);
-  }
-  return res.json() as Promise<T>;
-}
-
-// ─── Spinner ──────────────────────────────────────────────────────────────────
-function Spinner({ size = 4 }: { size?: number }) {
-  return (
-    <svg
-      className={`animate-spin h-${size} w-${size} text-current`}
-      fill="none"
-      viewBox="0 0 24 24"
-    >
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
-}
-
-// ─── Badge ────────────────────────────────────────────────────────────────────
-function Badge({ children, color = 'gray' }: { children: React.ReactNode; color?: string }) {
-  const cls: Record<string, string> = {
-    gray:   'bg-gray-800 text-gray-300',
-    green:  'bg-green-900/50 text-green-300 border border-green-700/50',
-    red:    'bg-red-900/50 text-red-300 border border-red-700/50',
-    yellow: 'bg-yellow-900/50 text-yellow-300 border border-yellow-700/50',
-    blue:   'bg-blue-900/50 text-blue-300 border border-blue-700/50',
-    purple: 'bg-purple-900/50 text-purple-300 border border-purple-700/50',
-  };
-  return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls[color] ?? cls.gray}`}>
-      {children}
-    </span>
-  );
-}
-
-// ─── Select Dropdown ──────────────────────────────────────────────────────────
-function Select({
-  label, icon, value, options, onChange, placeholder,
-}: {
-  label: string;
-  icon: string;
-  value: string;
-  options: string[];
-  onChange: (v: string) => void;
-  placeholder: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1 min-w-[140px]">
-      <label className="text-gray-500 text-[10px] font-semibold uppercase tracking-widest flex items-center gap-1">
-        <span>{icon}</span>{label}
-      </label>
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="bg-gray-900 border border-gray-700 text-white rounded-xl px-3 py-2 text-sm
-                   focus:outline-none focus:border-red-500 transition-colors cursor-pointer appearance-none
-                   pr-8 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTEgMUw2IDdMMTEgMSIgc3Ryb2tlPSIjNjM2MzYzIiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+')] bg-no-repeat bg-[right_12px_center]"
-      >
-        <option value="">{placeholder}</option>
-        {options.map(o => (
-          <option key={o} value={o}>{o}</option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-// ─── Active Filter Chip ───────────────────────────────────────────────────────
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 bg-red-700/30 border border-red-600/40 text-red-300 px-3 py-1 rounded-full text-xs font-medium">
-      {label}
-      <button onClick={onRemove} className="hover:text-white transition-colors leading-none">✕</button>
-    </span>
-  );
-}
-
-// ─── Movie Card ───────────────────────────────────────────────────────────────
-function MovieCard({ entry, onRemove }: { entry: MovieEntry; onRemove: (id: string) => void }) {
-  const [imgErr, setImgErr] = useState(false);
-
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-red-600/50 transition-all duration-200 group relative flex flex-col">
-      {/* Poster */}
-      <div className="relative aspect-[2/3] bg-gray-800 overflow-hidden flex-shrink-0">
-        {entry.poster && !imgErr ? (
-          <img
-            src={entry.poster}
-            alt={entry.cleanTitle}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            onError={() => setImgErr(true)}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-5xl text-gray-700 bg-gradient-to-br from-gray-800 to-gray-900">
-            🎬
-          </div>
-        )}
-
-        {/* Overlay gradient */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-
-        {/* TMDB badge */}
-        {entry.tmdbFetched && (
-          <div className="absolute top-2 right-2">
-            <span className="bg-blue-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">TMDB</span>
-          </div>
-        )}
-
-        {/* Rating */}
-        {entry.imdbRating && (
-          <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full">
-            ⭐ {entry.imdbRating}
-          </div>
-        )}
-
-        {/* Year */}
-        {entry.year && (
-          <div className="absolute bottom-2 right-2 bg-black/60 text-gray-300 text-xs px-1.5 py-0.5 rounded">
-            {entry.year}
-          </div>
-        )}
-
-        {/* Remove */}
-        <button
-          onClick={() => onRemove(entry.id)}
-          className="absolute top-2 left-2 bg-red-600/80 hover:bg-red-600 text-white w-6 h-6 rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* Info */}
-      <div className="p-3 space-y-1.5 flex-1 flex flex-col">
-        <h3 className="text-white text-sm font-semibold leading-tight line-clamp-2 flex-1">
-          {entry.cleanTitle}
-        </h3>
-        <div className="flex flex-wrap gap-1">
-          {entry.language && <Badge color="blue">{entry.language}</Badge>}
-        </div>
-        {entry.genre && (
-          <p className="text-gray-500 text-xs line-clamp-1">{entry.genre}</p>
-        )}
-        {entry.duration && (
-          <p className="text-gray-600 text-xs">⏱ {entry.duration}</p>
-        )}
-        {entry.director && (
-          <p className="text-gray-500 text-xs line-clamp-1 truncate">🎬 {entry.director}</p>
-        )}
-        {entry.description && (
-          <p className="text-gray-500 text-xs line-clamp-2 mt-1">{entry.description}</p>
-        )}
-        <div className="pt-1">
-          <a
-            href={entry.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-red-400 hover:text-red-300 text-xs truncate block"
-            title={entry.url}
-          >
-            ▶ Stream URL
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Filter Bar ───────────────────────────────────────────────────────────────
-interface ActiveFilters {
-  search: string;
-  genre: string;
-  year: string;
-  language: string;
-}
-
-function FilterBar({
-  filters,
-  filterOptions,
-  onChange,
-  onClear,
-  total,
-  showing,
-  loading,
-}: {
-  filters: ActiveFilters;
-  filterOptions: FiltersResponse;
-  onChange: (f: Partial<ActiveFilters>) => void;
-  onClear: () => void;
-  total: number;
-  showing: number;
-  loading: boolean;
-}) {
-  const hasActive =
-    filters.search || filters.genre || filters.year || filters.language;
-
-  return (
-    <div className="space-y-3">
-      {/* Filter Controls Row */}
-      <div className="flex flex-wrap gap-3 items-end">
-        {/* Search */}
-        <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
-          <label className="text-gray-500 text-[10px] font-semibold uppercase tracking-widest flex items-center gap-1">
-            🔍 Search
-          </label>
-          <div className="relative">
-            <input
-              type="text"
-              value={filters.search}
-              onChange={e => onChange({ search: e.target.value })}
-              placeholder="Movie title, director, cast..."
-              className="w-full bg-gray-900 border border-gray-700 text-white rounded-xl pl-4 pr-4 py-2 text-sm
-                         focus:outline-none focus:border-red-500 transition-colors placeholder-gray-600"
-            />
-          </div>
-        </div>
-
-        {/* Genre */}
-        {filterOptions.genres.length > 0 && (
-          <Select
-            label="Genre"
-            icon="🎭"
-            value={filters.genre}
-            options={filterOptions.genres}
-            onChange={v => onChange({ genre: v })}
-            placeholder="All Genres"
-          />
-        )}
-
-        {/* Year */}
-        {filterOptions.years.length > 0 && (
-          <Select
-            label="Year"
-            icon="📅"
-            value={filters.year}
-            options={filterOptions.years}
-            onChange={v => onChange({ year: v })}
-            placeholder="All Years"
-          />
-        )}
-
-        {/* Language */}
-        {filterOptions.languages.length > 0 && (
-          <Select
-            label="Language"
-            icon="🌐"
-            value={filters.language}
-            options={filterOptions.languages}
-            onChange={v => onChange({ language: v })}
-            placeholder="All Languages"
-          />
-        )}
-
-        {/* Clear All */}
-        {hasActive && (
-          <button
-            onClick={onClear}
-            className="self-end bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
-          >
-            ✕ Clear
-          </button>
-        )}
-      </div>
-
-      {/* Active Filter Chips + Count */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex flex-wrap gap-2 items-center">
-          {filters.genre    && <FilterChip label={`Genre: ${filters.genre}`}    onRemove={() => onChange({ genre: '' })} />}
-          {filters.year     && <FilterChip label={`Year: ${filters.year}`}       onRemove={() => onChange({ year: '' })} />}
-          {filters.language && <FilterChip label={`Lang: ${filters.language}`}   onRemove={() => onChange({ language: '' })} />}
-          {filters.search   && <FilterChip label={`"${filters.search}"`}         onRemove={() => onChange({ search: '' })} />}
-        </div>
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          {loading && <span className="flex items-center gap-1"><Spinner size={3} /> Loading...</span>}
-          <span>
-            Showing <span className="text-white font-semibold">{showing}</span>
-            {' '}of{' '}
-            <span className="text-white font-semibold">{total}</span>
-            {' '}movies
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Status Bar ───────────────────────────────────────────────────────────────
-function StatusBar({ status }: { status: StatusResponse | null }) {
-  if (!status) return null;
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      {[
-        { label: 'Total Movies',  value: status.total,                                                         icon: '🎬', color: 'red' },
-        { label: 'TMDB',          value: status.config.tmdbConfigured ? '✅ Active' : '⚠️ Not set',            icon: '🎭', color: status.config.tmdbConfigured ? 'green' : 'yellow' },
-        { label: 'Last Refresh',  value: status.lastFetched ? new Date(status.lastFetched).toLocaleTimeString() : 'Never', icon: '🕐', color: 'gray' },
-        { label: 'Auto-Refresh',  value: `Every ${status.config.refreshIntervalHours}h`,                       icon: '🔄', color: 'blue' },
-      ].map(s => (
-        <div key={s.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-          <div className="flex items-center gap-2 text-gray-400 text-xs mb-1">
-            <span>{s.icon}</span>
-            <span className="uppercase tracking-wide font-medium">{s.label}</span>
-          </div>
-          <p className={`font-bold text-lg ${
-            s.color === 'red'    ? 'text-red-400'    :
-            s.color === 'green'  ? 'text-green-400'  :
-            s.color === 'yellow' ? 'text-yellow-400' :
-            s.color === 'blue'   ? 'text-blue-400'   : 'text-white'
-          }`}>
-            {String(s.value)}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Config Panel ─────────────────────────────────────────────────────────────
-function ConfigPanel({
-  status, onSave, onRefresh, onFullRefresh, saving, refreshing,
-}: {
-  status: StatusResponse | null;
-  onSave: (cfg: Partial<AddonConfig>) => Promise<void>;
-  onRefresh: () => Promise<void>;
-  onFullRefresh: () => Promise<void>;
-  saving: boolean;
-  refreshing: boolean;
-}) {
-  const [form, setForm] = useState<Partial<AddonConfig>>({
-    m3uUrl:              '',
-    tmdbApiKey:          '',
-    addonName:           'VT Tamil Movies',
-    addonId:             'com.vt.tamil.stremio',
-    addonVersion:        '1.0.0',
-    addonDescription:    'Tamil movies addon powered by VT collection',
-    filterGroups:        ['VT 🎬 | Tamil Movies'],
-    refreshIntervalHours: 6,
-  });
-  const [filterGroupStr, setFilterGroupStr] = useState('VT 🎬 | Tamil Movies');
-
-  useEffect(() => {
-    if (status?.config) {
-      setForm(prev => ({
-        ...prev,
-        m3uUrl:              status.config.m3uUrl || '',
-        addonName:           status.config.addonName || prev.addonName,
-        addonId:             status.config.addonId   || prev.addonId,
-        filterGroups:        status.config.filterGroups || prev.filterGroups,
-        refreshIntervalHours: status.config.refreshIntervalHours || 6,
-      }));
-      setFilterGroupStr((status.config.filterGroups || []).join('\n'));
-    }
-  }, [status]);
-
-  const handleSave = async () => {
-    const groups = filterGroupStr.split('\n').map(s => s.trim()).filter(Boolean);
-    await onSave({ ...form, filterGroups: groups });
-  };
-
-  const field = (
-    label: string,
-    key: keyof AddonConfig,
-    type = 'text',
-    placeholder = '',
-    hint?: string,
-  ) => (
-    <div className="space-y-1.5">
-      <label className="text-gray-400 text-xs font-medium uppercase tracking-wide">{label}</label>
-      <input
-        type={type}
-        value={String(form[key] ?? '')}
-        onChange={e => setForm(p => ({
-          ...p,
-          [key]: type === 'number' ? Number(e.target.value) : e.target.value,
-        }))}
-        placeholder={placeholder}
-        className="w-full bg-gray-950 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm
-                   focus:outline-none focus:border-red-500 transition-colors placeholder-gray-600"
-      />
-      {hint && <p className="text-gray-600 text-xs">{hint}</p>}
-    </div>
-  );
-
-  return (
-    <div className="space-y-6">
-      {/* Addon URL */}
-      {status?.addonUrl && (
-        <div className="bg-gradient-to-r from-red-900/30 to-red-800/10 border border-red-700/50 rounded-xl p-4">
-          <p className="text-red-300 text-xs font-semibold uppercase tracking-wide mb-2">🔗 Stremio Addon URL</p>
-          <div className="flex items-center gap-3">
-            <code className="flex-1 bg-black/40 text-green-400 rounded-lg px-3 py-2 text-sm font-mono break-all">
-              {status.addonUrl}
-            </code>
-            <button
-              onClick={() => navigator.clipboard.writeText(status.addonUrl)}
-              className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
-            >
-              Copy
-            </button>
-          </div>
-          <p className="text-gray-500 text-xs mt-2">
-            Paste this URL into Stremio → Add-ons → Community Add-ons → Paste URL
-          </p>
-        </div>
-      )}
-
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Source Config */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <h3 className="text-white font-semibold flex items-center gap-2">
-            <span>📡</span> M3U Source
-          </h3>
-          {field('Raw GitHub M3U URL', 'm3uUrl', 'text', 'https://raw.githubusercontent.com/…')}
-          <div className="space-y-1.5">
-            <label className="text-gray-400 text-xs font-medium uppercase tracking-wide">
-              Filter Groups <span className="normal-case text-gray-600">(one per line)</span>
-            </label>
-            <textarea
-              rows={3}
-              value={filterGroupStr}
-              onChange={e => setFilterGroupStr(e.target.value)}
-              placeholder="VT 🎬 | Tamil Movies"
-              className="w-full bg-gray-950 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm
-                         focus:outline-none focus:border-red-500 transition-colors placeholder-gray-600 resize-none"
-            />
-          </div>
-          {field('Auto-Refresh Interval (hours)', 'refreshIntervalHours', 'number', '6')}
-        </div>
-
-        {/* TMDB + Addon Meta */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-          <h3 className="text-white font-semibold flex items-center gap-2">
-            <span>🎭</span> TMDB & Addon Info
-          </h3>
-          <div className="space-y-1.5">
-            <label className="text-gray-400 text-xs font-medium uppercase tracking-wide">TMDB API Key</label>
-            <input
-              type="password"
-              value={String(form.tmdbApiKey ?? '')}
-              onChange={e => setForm(p => ({ ...p, tmdbApiKey: e.target.value }))}
-              placeholder="Your TMDB v3 API key"
-              className="w-full bg-gray-950 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm
-                         focus:outline-none focus:border-red-500 transition-colors placeholder-gray-600"
-            />
-            <p className="text-gray-600 text-xs">
-              Free key at{' '}
-              <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-                themoviedb.org
-              </a>
-              . Also set <code className="bg-gray-800 px-1 rounded text-xs">TMDB_API_KEY</code> env var.
-            </p>
-          </div>
-          {field('Addon Name',        'addonName',        'text', 'VT Tamil Movies')}
-          {field('Addon ID',          'addonId',          'text', 'com.vt.tamil.stremio')}
-          {field('Addon Version',     'addonVersion',     'text', '1.0.0')}
-          {field('Description',       'addonDescription', 'text', 'Tamil movies addon')}
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex flex-wrap gap-3">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="bg-red-600 hover:bg-red-700 disabled:bg-gray-700 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition-colors flex items-center gap-2"
-        >
-          {saving ? <><Spinner /> Saving…</> : '💾 Save Config'}
-        </button>
-        <button
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition-colors flex items-center gap-2"
-        >
-          {refreshing ? <><Spinner /> Refreshing…</> : '⚡ Refresh M3U'}
-        </button>
-        <button
-          onClick={onFullRefresh}
-          disabled={refreshing}
-          className="bg-blue-700 hover:bg-blue-600 disabled:bg-gray-800 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition-colors flex items-center gap-2"
-        >
-          {refreshing ? <><Spinner /> Working…</> : '🔄 Full TMDB Re-enrich'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Deploy Panel ─────────────────────────────────────────────────────────────
-function DeployPanel({ addonUrl }: { addonUrl?: string }) {
-  const [copied, setCopied] = useState<string | null>(null);
-  const copy = (text: string, key: string) => {
+// ── Copy Button ──────────────────────────────────────────────
+function CopyBtn({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
     navigator.clipboard.writeText(text);
-    setCopied(key);
-    setTimeout(() => setCopied(null), 2000);
-  };
-  const CopyBtn = ({ text, id }: { text: string; id: string }) => (
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [text]);
+
+  return (
     <button
-      onClick={() => copy(text, id)}
-      className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded transition-colors"
+      onClick={copy}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all
+        bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-gray-300"
     >
-      {copied === id ? '✅ Copied' : '📋 Copy'}
+      {copied ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+      {label || (copied ? "Copied!" : "Copy")}
     </button>
   );
+}
 
-  const CODE = {
-    env: `TMDB_API_KEY=your_tmdb_api_key_here\nM3U_URL=https://raw.githubusercontent.com/your/repo/main/playlist.m3u\nPORT=7000`,
-    render: `# Build Command\nnpm run build\n\n# Start Command\nnode --loader tsx/esm server/index.ts`,
-    start:  `npm run build && node --loader tsx/esm server/index.ts`,
-    docker: `FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install\nCOPY . .\nRUN npm run build\nEXPOSE 7000\nCMD ["node", "--loader", "tsx/esm", "server/index.ts"]`,
-  };
-
+// ── Collapsible Code Block ────────────────────────────────────
+function CodeBlock({ title, code, language, defaultOpen = false }: {
+  title: string; code: string; language: string; defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="space-y-6">
-      {addonUrl && (
-        <div className="bg-gradient-to-r from-green-900/30 to-green-800/10 border border-green-700/50 rounded-xl p-4">
-          <p className="text-green-300 text-xs font-semibold uppercase mb-2">🎉 Your Addon URL</p>
-          <div className="flex items-center gap-3">
-            <code className="flex-1 bg-black/40 text-green-400 rounded-lg px-3 py-2 text-sm font-mono break-all">{addonUrl}</code>
-            <CopyBtn text={addonUrl} id="addonUrl" />
-          </div>
+    <div className="rounded-xl border border-white/10 overflow-hidden bg-[#0d1117]">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-[#161b22] hover:bg-[#1c2129] transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <FileText size={16} className="text-purple-400" />
+          <span className="text-sm font-medium text-gray-200">{title}</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono">{language}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <CopyBtn text={code} />
+          {open ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+        </div>
+      </button>
+      {open && (
+        <div className="code-block border-0 rounded-none">
+          <pre className="p-4 text-[13px] leading-relaxed text-gray-300 overflow-x-auto">
+            <code>{code}</code>
+          </pre>
         </div>
       )}
+    </div>
+  );
+}
 
-      <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-          <h3 className="text-white font-semibold">🔐 Environment Variables</h3>
-          <div className="relative">
-            <pre className="bg-gray-950 text-green-400 text-xs font-mono rounded-lg p-4 overflow-x-auto">{CODE.env}</pre>
-            <div className="absolute top-2 right-2"><CopyBtn text={CODE.env} id="env" /></div>
-          </div>
-        </div>
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-          <h3 className="text-white font-semibold flex items-center gap-2">
-            <span className="bg-purple-600 text-white text-xs px-2 py-0.5 rounded font-bold">Render</span>
-            Render.com
-          </h3>
-          <ol className="text-gray-400 text-sm space-y-1 list-decimal list-inside">
-            <li>Push project to GitHub</li>
-            <li>Create a new <strong className="text-white">Web Service</strong></li>
-            <li>Connect your GitHub repo</li>
-            <li>Set build & start commands</li>
-            <li>Add environment variables</li>
-          </ol>
-          <div className="relative">
-            <pre className="bg-gray-950 text-green-400 text-xs font-mono rounded-lg p-4 overflow-x-auto">{CODE.render}</pre>
-            <div className="absolute top-2 right-2"><CopyBtn text={CODE.render} id="render" /></div>
-          </div>
-        </div>
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-          <h3 className="text-white font-semibold">🚂 Railway / Fly.io</h3>
-          <div className="relative">
-            <pre className="bg-gray-950 text-green-400 text-xs font-mono rounded-lg p-4 overflow-x-auto">{CODE.start}</pre>
-            <div className="absolute top-2 right-2"><CopyBtn text={CODE.start} id="start" /></div>
-          </div>
-        </div>
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-          <h3 className="text-white font-semibold">🐳 Docker</h3>
-          <div className="relative">
-            <pre className="bg-gray-950 text-green-400 text-xs font-mono rounded-lg p-4 overflow-x-auto whitespace-pre-wrap">{CODE.docker}</pre>
-            <div className="absolute top-2 right-2"><CopyBtn text={CODE.docker} id="docker" /></div>
-          </div>
-        </div>
+// ── Feature Card ─────────────────────────────────────────────
+function FeatureCard({ icon: Icon, title, desc, color }: {
+  icon: any; title: string; desc: string; color: string;
+}) {
+  return (
+    <div className="group p-6 rounded-2xl bg-[#111127] border border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-purple-500/5">
+      <div className={`inline-flex p-3 rounded-xl mb-4 ${color}`}>
+        <Icon size={24} />
       </div>
+      <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
+      <p className="text-gray-400 text-sm leading-relaxed">{desc}</p>
+    </div>
+  );
+}
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h3 className="text-white font-semibold mb-4">📱 Stremio Filter Catalogs</h3>
-        <p className="text-gray-400 text-sm mb-4">
-          The addon exposes <strong className="text-white">5 catalog views</strong> in Stremio, each with its own filter:
-        </p>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {[
-            { icon: '🎬', name: 'All Movies',      desc: 'Paginated full list, no filter required.' },
-            { icon: '🎭', name: 'By Genre',         desc: 'Dropdown of all genres (Action, Drama, Comedy…).' },
-            { icon: '📅', name: 'By Year',          desc: 'Dropdown of release years (2026, 2025…).' },
-            { icon: '🌐', name: 'By Language',      desc: 'Filter by Tamil, Hindi, Telugu, etc.' },
-            { icon: '🔍', name: 'Search',           desc: 'Full-text search by title, director, cast.' },
-          ].map(c => (
-            <div key={c.name} className="bg-gray-950 border border-gray-800 rounded-lg p-3 flex items-start gap-3">
-              <span className="text-2xl">{c.icon}</span>
-              <div>
-                <p className="text-white text-sm font-semibold">{c.name}</p>
-                <p className="text-gray-500 text-xs mt-0.5">{c.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-5 grid sm:grid-cols-3 gap-4">
-          {[
-            { step: '1', title: 'Get Addon URL',  desc: 'Copy the /manifest.json URL from the Configuration tab.' },
-            { step: '2', title: 'Open Stremio',   desc: 'Add-ons → ⚙ icon → Install from URL.' },
-            { step: '3', title: 'Browse & Filter',desc: 'Use Genre / Year / Language dropdowns in Stremio catalog.' },
-          ].map(s => (
-            <div key={s.step} className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-red-600 text-white text-sm font-bold flex items-center justify-center flex-shrink-0">{s.step}</div>
-              <div>
-                <p className="text-white font-medium text-sm">{s.title}</p>
-                <p className="text-gray-400 text-xs mt-0.5">{s.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+// ── Step Card ────────────────────────────────────────────────
+function StepCard({ num, title, children }: { num: number; title: string; children: React.ReactNode }) {
+  return (
+    <div className="relative pl-14">
+      <div className="absolute left-0 top-0 w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-purple-500/20">
+        {num}
+      </div>
+      {num < 6 && <div className="step-connector" />}
+      <div className="pb-10">
+        <h3 className="text-lg font-semibold text-white mb-3">{title}</h3>
+        <div className="space-y-3">{children}</div>
       </div>
     </div>
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
-type Tab = 'catalog' | 'config' | 'deploy';
+// ── Inline Code ──────────────────────────────────────────────
+function IC({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="px-1.5 py-0.5 rounded bg-white/10 text-purple-300 text-xs font-mono">{children}</code>
+  );
+}
 
-const EMPTY_FILTERS: ActiveFilters = { search: '', genre: '', year: '', language: '' };
-const LIMIT = 48;
+// ── SERVER CODE ──────────────────────────────────────────────
+const SERVER_CODE = `// ============================================================
+//  Stremio M3U Addon Server — Full-Stack Render Deployment
+//  Features: M3U parsing, TMDB fallback, 6hr auto-refresh,
+//            Render free-tier keep-alive, sort & filter catalogs
+// ============================================================
 
+const express = require("express");
+const cors = require("cors");
+const axios = require("axios");
+
+// ── ENV ──────────────────────────────────────────────────────
+const M3U_URL = process.env.M3U_URL || "";
+const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
+const PORT = parseInt(process.env.PORT, 10) || 7000;
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || "";
+const REFRESH_HOURS = parseInt(process.env.REFRESH_HOURS, 10) || 6;
+const REFRESH_MS = REFRESH_HOURS * 60 * 60 * 1000;
+const KEEP_ALIVE_MS = 10 * 60 * 1000; // 10 minutes
+
+// ── CACHE ────────────────────────────────────────────────────
+let allItems = [];
+let catalogMap = {};
+let groupTitles = [];
+let lastRefresh = null;
+let tmdbCache = {};
+
+// ── M3U PARSER ───────────────────────────────────────────────
+function parseM3U(content) {
+  const lines = content.split("\\n");
+  const items = [];
+  let cur = null;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line.startsWith("#EXTINF:")) {
+      cur = parseExtInf(line);
+    } else if (line && !line.startsWith("#") && cur) {
+      cur.url = line;
+      cur.id = generateId(cur);
+      items.push(cur);
+      cur = null;
+    }
+  }
+  return items;
+}
+
+function parseExtInf(line) {
+  const attr = (key) => {
+    const r = new RegExp(key + '="([^"]*)"', "i");
+    const m = line.match(r);
+    return m ? m[1] : "";
+  };
+  const type = attr("type") || "movie";
+  const logo = attr("tvg-logo");
+  const groupLogo = attr("group-logo");
+  const group = attr("group-title");
+  const commaIdx = line.lastIndexOf(",");
+  const rawName = commaIdx !== -1 ? line.substring(commaIdx + 1).trim() : "";
+  const details = parseMovieDetails(rawName);
+  return { type, logo, groupLogo, group, rawName, ...details };
+}
+
+function parseMovieDetails(name) {
+  const d = {
+    title: name, year: null, genre: [], duration: null,
+    director: null, writers: null, stars: [], imdbRating: null, language: null,
+  };
+  const imdb = name.match(/[𝗜I][𝗠M][𝗗D][𝗕B]\\s*([\\d.]+)/i);
+  if (imdb) d.imdbRating = parseFloat(imdb[1]);
+  const yrAll = [...name.matchAll(/\\b((?:19|20)\\d{2})\\b/g)];
+  if (yrAll.length) d.year = parseInt(yrAll[0][1], 10);
+  const titleM = name.match(/^([^(𝗜]*)/);
+  if (titleM) {
+    let t = titleM[1].trim();
+    if (t.endsWith("(")) t = t.slice(0, -1).trim();
+    if (t) d.title = t;
+  }
+  const genreM = name.match(/‧\\s*([A-Za-z\\\\\\/|]+(?:\\s*[A-Za-z\\\\\\/|]+)*)\\s*‧/);
+  if (genreM) {
+    d.genre = genreM[1].split(/[\\\\\\/|]/).map(g => g.trim()).filter(Boolean);
+  }
+  const dur = name.match(/(\\d+h\\s*\\d*m?)/i);
+  if (dur) d.duration = dur[1];
+  const dir = name.match(/Directors?\\s+([^|)]+)/i);
+  if (dir) d.director = dir[1].trim();
+  const wri = name.match(/Writers?\\s+([^|)]+)/i);
+  if (wri) d.writers = wri[1].trim();
+  const sta = name.match(/Stars?\\s+(.+?)(?:\\)|$)/i);
+  if (sta) d.stars = sta[1].split("‧").map(s => s.trim()).filter(Boolean);
+  return d;
+}
+
+function generateId(item) {
+  const base = (item.title + "__" + (item.year || "0"))
+    .toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return "m3u_" + base;
+}
+
+// ── TMDB FALLBACK ────────────────────────────────────────────
+async function fetchTMDB(title, year) {
+  if (!TMDB_API_KEY) return null;
+  const key = title + "|" + (year || "");
+  if (tmdbCache[key] !== undefined) return tmdbCache[key];
+  try {
+    const q = encodeURIComponent(title);
+    let searchUrl = \`https://api.themoviedb.org/3/search/movie?api_key=\${TMDB_API_KEY}&query=\${q}\`;
+    if (year) searchUrl += \`&year=\${year}\`;
+    const { data } = await axios.get(searchUrl, { timeout: 8000 });
+    if (!data.results?.length) { tmdbCache[key] = null; return null; }
+    const movie = data.results[0];
+    const detUrl = \`https://api.themoviedb.org/3/movie/\${movie.id}?api_key=\${TMDB_API_KEY}&append_to_response=credits,external_ids\`;
+    const { data: det } = await axios.get(detUrl, { timeout: 8000 });
+    const result = {
+      poster: det.poster_path ? \`https://image.tmdb.org/t/p/w500\${det.poster_path}\` : null,
+      background: det.backdrop_path ? \`https://image.tmdb.org/t/p/w1280\${det.backdrop_path}\` : null,
+      description: det.overview, imdbRating: det.vote_average?.toFixed(1),
+      year: det.release_date ? new Date(det.release_date).getFullYear() : null,
+      genres: det.genres?.map(g => g.name) || [],
+      runtime: det.runtime ? Math.floor(det.runtime/60)+"h "+det.runtime%60+"m" : null,
+      director: det.credits?.crew?.find(c => c.job==="Director")?.name,
+      cast: det.credits?.cast?.slice(0,5).map(c => c.name) || [],
+      imdb_id: det.imdb_id || det.external_ids?.imdb_id, tmdb_id: det.id,
+    };
+    tmdbCache[key] = result;
+    return result;
+  } catch (err) {
+    console.error("[TMDB] Error:", err.message);
+    tmdbCache[key] = null;
+    return null;
+  }
+}
+
+// ── REFRESH M3U ──────────────────────────────────────────────
+async function refreshM3U() {
+  if (!M3U_URL) return console.warn("[M3U] No M3U_URL configured.");
+  console.log("[M3U] Refreshing from:", M3U_URL);
+  try {
+    const { data } = await axios.get(M3U_URL, {
+      timeout: 30000, responseType: "text",
+      headers: { "User-Agent": "StremioAddon/1.0" },
+    });
+    const items = parseM3U(data);
+    const map = {};
+    for (const item of items) {
+      const g = item.group || "Uncategorized";
+      if (!map[g]) map[g] = [];
+      map[g].push(item);
+    }
+    allItems = items;
+    catalogMap = map;
+    groupTitles = Object.keys(map).sort();
+    lastRefresh = new Date();
+    console.log("[M3U] Parsed", items.length, "items,", groupTitles.length, "groups");
+  } catch (err) {
+    console.error("[M3U] Refresh error:", err.message);
+  }
+}
+
+// ── BUILD STREMIO META ───────────────────────────────────────
+async function buildMeta(item, full = false) {
+  let poster = item.logo, background = null, description = null;
+  let genres = item.genre?.length ? item.genre : [];
+  let director = item.director, cast = item.stars || [];
+  let imdbRating = item.imdbRating, runtime = item.duration;
+  let imdb_id = null, year = item.year;
+
+  if ((!poster || !description || !genres.length) && TMDB_API_KEY) {
+    const tmdb = await fetchTMDB(item.title, item.year);
+    if (tmdb) {
+      if (!poster) poster = tmdb.poster;
+      if (!background) background = tmdb.background;
+      if (!description) description = tmdb.description;
+      if (!genres.length && tmdb.genres.length) genres = tmdb.genres;
+      if (!director) director = tmdb.director;
+      if (!cast.length) cast = tmdb.cast;
+      if (!imdbRating) imdbRating = parseFloat(tmdb.imdbRating);
+      if (!runtime) runtime = tmdb.runtime;
+      if (tmdb.imdb_id) imdb_id = tmdb.imdb_id;
+      if (!year) year = tmdb.year;
+    }
+  }
+
+  if (!description) {
+    const parts = [];
+    if (imdbRating) parts.push("⭐ IMDB " + imdbRating);
+    if (year) parts.push("📅 " + year);
+    if (runtime) parts.push("⏱ " + runtime);
+    if (director) parts.push("🎬 Director: " + director);
+    if (cast.length) parts.push("🌟 Stars: " + cast.join(", "));
+    description = parts.join("\\n") || item.rawName;
+  }
+
+  const meta = {
+    id: item.id, type: item.type === "series" ? "series" : "movie",
+    name: item.title, poster, background: background || poster,
+    description, year, genres: genres.length ? genres : undefined,
+    runtime, imdbRating, director: director ? [director] : undefined,
+    cast: cast.length ? cast : undefined,
+  };
+  if (full) {
+    meta.behaviorHints = { defaultVideoId: item.id };
+    if (imdb_id) meta.imdb_id = imdb_id;
+  }
+  return Object.fromEntries(Object.entries(meta).filter(([,v]) => v != null));
+}
+
+// ── MANIFEST ─────────────────────────────────────────────────
+function buildManifest() {
+  const catalogs = groupTitles.map(g => ({
+    type: "movie", id: "m3u_" + g.replace(/[^a-zA-Z0-9]/g, "_"),
+    name: g, extra: [
+      { name: "search", isRequired: false },
+      { name: "genre", isRequired: false, options: getGenresForGroup(g) },
+      { name: "skip", isRequired: false },
+    ],
+  }));
+  if (groupTitles.length) {
+    catalogs.unshift({
+      type: "movie", id: "m3u_all", name: "📺 All Movies",
+      extra: [
+        { name: "search", isRequired: false },
+        { name: "genre", isRequired: false, options: getAllGenres() },
+        { name: "skip", isRequired: false },
+      ],
+    });
+  }
+  return {
+    id: "community.m3u.stremio.addon", version: "1.0.0",
+    name: "M3U Stremio Addon",
+    description: "Stream movies from M3U playlists with TMDB metadata",
+    logo: "https://img.icons8.com/color/512/popcorn-time.png",
+    resources: ["catalog", "meta", "stream"], types: ["movie"],
+    catalogs, behaviorHints: { adult: false },
+    idPrefixes: ["m3u_"],
+  };
+}
+function getGenresForGroup(group) {
+  const s = new Set();
+  (catalogMap[group]||[]).forEach(i => { i.genre?.forEach(g=>s.add(g)); if(i.language)s.add(i.language); });
+  return [...s].sort();
+}
+function getAllGenres() {
+  const s = new Set();
+  allItems.forEach(i => { i.genre?.forEach(g=>s.add(g)); if(i.language)s.add(i.language); });
+  return [...s].sort();
+}
+
+// ── EXPRESS ──────────────────────────────────────────────────
+const app = express();
+app.use(cors());
+
+app.get("/manifest.json", (req, res) => res.json(buildManifest()));
+
+app.get("/catalog/:type/:id/:extra?.json", async (req, res) => {
+  const { id } = req.params;
+  const extras = {};
+  const extraStr = req.params.extra || "";
+  if (extraStr) decodeURIComponent(extraStr).split("&").forEach(p => {
+    const i = p.indexOf("="); if(i!==-1) extras[p.slice(0,i)]=p.slice(i+1);
+  });
+  let items = id === "m3u_all" ? [...allItems] :
+    [...(catalogMap[groupTitles.find(g => "m3u_"+g.replace(/[^a-zA-Z0-9]/g,"_")===id)] || [])];
+  if (extras.search) {
+    const q = extras.search.toLowerCase();
+    items = items.filter(i =>
+      i.title.toLowerCase().includes(q) || i.rawName.toLowerCase().includes(q)
+    );
+  }
+  if (extras.genre) items = items.filter(i =>
+    i.genre?.includes(extras.genre) || i.language === extras.genre
+  );
+  items.sort((a,b) => {
+    if(a.year&&b.year&&a.year!==b.year) return b.year-a.year;
+    if(a.imdbRating&&b.imdbRating) return b.imdbRating-a.imdbRating;
+    return a.title.localeCompare(b.title);
+  });
+  const skip = parseInt(extras.skip,10)||0;
+  const paged = items.slice(skip, skip+100);
+  const metas = [];
+  for(let i=0;i<paged.length;i+=10) {
+    metas.push(...await Promise.all(paged.slice(i,i+10).map(it=>buildMeta(it))));
+  }
+  res.json({ metas });
+});
+
+app.get("/meta/:type/:id.json", async (req, res) => {
+  const item = allItems.find(i => i.id === req.params.id);
+  if (!item) return res.json({ meta: null });
+  res.json({ meta: await buildMeta(item, true) });
+});
+
+app.get("/stream/:type/:id.json", (req, res) => {
+  const item = allItems.find(i => i.id === req.params.id);
+  if (!item?.url) return res.json({ streams: [] });
+  res.json({ streams: [{
+    title: "▶️ " + item.title + (item.duration ? " ("+item.duration+")" : ""),
+    url: item.url,
+    behaviorHints: { notWebReady: false, bingeGroup: item.group || "default" },
+  }]});
+});
+
+app.get("/health", (req,res) => res.json({
+  status: "ok", items: allItems.length, groups: groupTitles.length,
+  lastRefresh: lastRefresh?.toISOString(), tmdb: !!TMDB_API_KEY,
+  uptime: process.uptime(),
+}));
+
+function getBaseUrl(req) {
+  if (RENDER_EXTERNAL_URL) return RENDER_EXTERNAL_URL;
+  return (req.headers["x-forwarded-proto"]||req.protocol)+"://"+req.get("host");
+}
+
+// Landing page at root
+app.get("/", (req, res) => {
+  const url = getBaseUrl(req) + "/manifest.json";
+  const stremio = "stremio://" + url.replace(/^https?:\\/\\//, "");
+  res.send(\`<html><body style="background:#0a0a1a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh"><div style="text-align:center"><h1>🎬 M3U Stremio Addon</h1><p>\${allItems.length} movies in \${groupTitles.length} categories</p><br><a href="\${stremio}" style="background:#7b5ea7;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Install in Stremio</a><p style="margin-top:16px;color:#666;font-size:13px">\${url}</p></div></body></html>\`);
+});
+
+// ── KEEP-ALIVE ───────────────────────────────────────────────
+function startKeepAlive() {
+  if (!RENDER_EXTERNAL_URL) return;
+  setInterval(async () => {
+    try { await axios.get(RENDER_EXTERNAL_URL+"/health",{timeout:10000}); }
+    catch(e) { console.error("[KEEP-ALIVE] Failed:", e.message); }
+  }, KEEP_ALIVE_MS);
+}
+
+// ── START ────────────────────────────────────────────────────
+(async () => {
+  await refreshM3U();
+  app.listen(PORT, () => {
+    console.log("🚀 Server running on port", PORT);
+    setInterval(refreshM3U, REFRESH_MS);
+    startKeepAlive();
+  });
+})();`;
+
+const PACKAGE_JSON_CODE = `{
+  "name": "stremio-m3u-addon",
+  "version": "1.0.0",
+  "description": "Stremio addon - M3U playlists with TMDB fallback",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  },
+  "engines": { "node": ">=18.0.0" }
+}`;
+
+const RENDER_YAML_CODE = `services:
+  - type: web
+    name: stremio-m3u-addon
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: M3U_URL
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      - key: RENDER_EXTERNAL_URL
+        generateValue: true
+      - key: PORT
+        value: 7000
+      - key: REFRESH_HOURS
+        value: 6`;
+
+const ENV_CODE = `# Required — Raw GitHub URL to your M3U playlist
+M3U_URL=https://raw.githubusercontent.com/user/repo/main/playlist.m3u
+
+# Optional — TMDB API Key for fallback metadata & posters
+# Get free at: https://www.themoviedb.org/settings/api
+TMDB_API_KEY=
+
+# Auto-set on Render — used for keep-alive pinger
+RENDER_EXTERNAL_URL=
+
+PORT=7000
+REFRESH_HOURS=6`;
+
+const DOCKERFILE_CODE = `FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 7000
+CMD ["node", "server.js"]`;
+
+// ── MAIN APP ─────────────────────────────────────────────────
 export default function App() {
-  const [activeTab,     setActiveTab]     = useState<Tab>('catalog');
-  const [status,        setStatus]        = useState<StatusResponse | null>(null);
-  const [entries,       setEntries]       = useState<MovieEntry[]>([]);
-  const [totalEntries,  setTotalEntries]  = useState(0);
-  const [skip,          setSkip]          = useState(0);
-  const [loading,       setLoading]       = useState(false);
-  const [saving,        setSaving]        = useState(false);
-  const [refreshing,    setRefreshing]    = useState(false);
-  const [error,         setError]         = useState<string | null>(null);
-  const [serverOnline,  setServerOnline]  = useState<boolean | null>(null);
-  const [filters,       setFilters]       = useState<ActiveFilters>(EMPTY_FILTERS);
-  const [filterOptions, setFilterOptions] = useState<FiltersResponse>({ genres: [], years: [], languages: [] });
-
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ── Fetch server status ──────────────────────────────────────────────────────
-  const fetchStatus = useCallback(async () => {
-    try {
-      const s = await apiFetch<StatusResponse>('/api/status');
-      setStatus(s);
-      setServerOnline(true);
-    } catch {
-      setServerOnline(false);
-    }
-  }, []);
-
-  // ── Fetch filter options ─────────────────────────────────────────────────────
-  const fetchFilterOptions = useCallback(async () => {
-    try {
-      const f = await apiFetch<FiltersResponse>('/api/filters');
-      setFilterOptions(f);
-    } catch { /* ignore */ }
-  }, []);
-
-  // ── Fetch entries ────────────────────────────────────────────────────────────
-  const fetchEntries = useCallback(async (s: number, f: ActiveFilters) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ skip: String(s), limit: String(LIMIT) });
-      if (f.search)   params.set('search',   f.search);
-      if (f.genre)    params.set('genre',    f.genre);
-      if (f.year)     params.set('year',     f.year);
-      if (f.language) params.set('language', f.language);
-
-      const data = await apiFetch<EntriesResponse>(`/api/entries?${params}`);
-
-      if (s === 0) setEntries(data.entries);
-      else         setEntries(prev => [...prev, ...data.entries]);
-
-      setTotalEntries(data.total);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // ── Status polling ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    fetchStatus();
-    fetchFilterOptions();
-    const interval = setInterval(() => {
-      fetchStatus();
-      fetchFilterOptions();
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchStatus, fetchFilterOptions]);
-
-  // ── Initial load ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    fetchEntries(0, EMPTY_FILTERS);
-  }, [fetchEntries]);
-
-  // ── Debounced filter change ──────────────────────────────────────────────────
-  const handleFilterChange = (partial: Partial<ActiveFilters>) => {
-    const next = { ...filters, ...partial };
-    setFilters(next);
-    setSkip(0);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => fetchEntries(0, next), 350);
-  };
-
-  const handleClearFilters = () => {
-    setFilters(EMPTY_FILTERS);
-    setSkip(0);
-    fetchEntries(0, EMPTY_FILTERS);
-  };
-
-  // ── Actions ──────────────────────────────────────────────────────────────────
-  const handleSaveConfig = async (cfg: Partial<AddonConfig>) => {
-    setSaving(true); setError(null);
-    try {
-      await apiFetch('/api/config', { method: 'POST', body: JSON.stringify(cfg) });
-      await fetchStatus();
-    } catch (err) { setError((err as Error).message); }
-    finally { setSaving(false); }
-  };
-
-  const handleRefresh = async () => {
-    setRefreshing(true); setError(null);
-    try {
-      await apiFetch('/api/refresh', { method: 'POST' });
-      await fetchStatus();
-      await fetchFilterOptions();
-      await fetchEntries(0, filters);
-    } catch (err) { setError((err as Error).message); }
-    finally { setRefreshing(false); }
-  };
-
-  const handleFullRefresh = async () => {
-    setRefreshing(true); setError(null);
-    try {
-      await apiFetch('/api/refresh/full', { method: 'POST' });
-      await fetchStatus();
-      await fetchFilterOptions();
-      await fetchEntries(0, filters);
-    } catch (err) { setError((err as Error).message); }
-    finally { setRefreshing(false); }
-  };
-
-  const handleRemove = async (id: string) => {
-    try {
-      await apiFetch(`/api/entries/${id}`, { method: 'DELETE' });
-      setEntries(prev => prev.filter(e => e.id !== id));
-      setTotalEntries(prev => prev - 1);
-    } catch (err) { setError((err as Error).message); }
-  };
-
-  const handleLoadMore = () => {
-    const next = skip + LIMIT;
-    setSkip(next);
-    fetchEntries(next, filters);
-  };
-
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'catalog', label: 'Movie Catalog', icon: '🎬' },
-    { id: 'config',  label: 'Configuration', icon: '⚙️' },
-    { id: 'deploy',  label: 'Deploy',         icon: '🚀' },
-  ];
+  const [activeTab, setActiveTab] = useState<"deploy" | "code" | "m3u">("deploy");
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="min-h-screen bg-[#0a0a1a] text-gray-100">
+      {/* ── HERO ───────────────────────────────────────── */}
+      <header className="relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-blue-900/20" />
+        <div className="absolute top-20 left-1/4 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-40 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
 
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <header className="bg-gray-900/95 backdrop-blur border-b border-gray-800 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
+        <nav className="relative z-10 max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-xl">
+              🎬
+            </div>
+            <span className="font-bold text-lg">M3U Stremio Addon</span>
+          </div>
+          <div className="flex gap-2">
+            <a href="#features" className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Features</a>
+            <a href="#deploy" className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Deploy</a>
+            <a href="#code" className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Code</a>
+          </div>
+        </nav>
 
-            {/* Logo */}
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-600 to-red-800 flex items-center justify-center text-xl shadow-lg shadow-red-900/40">
-                🎬
+        <div className="relative z-10 max-w-4xl mx-auto px-6 pt-16 pb-24 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 text-sm mb-8">
+            <Zap size={14} />
+            <span>Render Free Tier Ready with Keep-Alive</span>
+          </div>
+
+          <h1 className="text-5xl md:text-7xl font-extrabold mb-6 leading-tight">
+            <span className="gradient-text">Stremio M3U</span>
+            <br />
+            <span className="text-white">Addon Server</span>
+          </h1>
+
+          <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+            Deploy a full-stack Stremio addon that parses M3U playlists from raw GitHub URLs,
+            with TMDB fallback for rich metadata, auto-refresh every 6 hours, and smart keep-alive
+            for Render's free tier.
+          </p>
+
+          <div className="flex flex-wrap gap-4 justify-center">
+            <a
+              href="#deploy"
+              className="px-8 py-4 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold text-lg
+                hover:from-purple-500 hover:to-blue-500 transition-all shadow-lg shadow-purple-500/25 glow-pulse"
+            >
+              <Rocket size={20} className="inline mr-2 -mt-0.5" />
+              Deploy Now
+            </a>
+            <a
+              href="#code"
+              className="px-8 py-4 rounded-xl bg-white/5 border border-white/10 text-white font-semibold text-lg
+                hover:bg-white/10 transition-all"
+            >
+              <BookOpen size={20} className="inline mr-2 -mt-0.5" />
+              View Code
+            </a>
+          </div>
+        </div>
+      </header>
+
+      {/* ── ARCHITECTURE BANNER ────────────────────────── */}
+      <section className="max-w-6xl mx-auto px-6 -mt-8 mb-20">
+        <div className="rounded-2xl bg-[#111127] border border-white/5 p-8 grid grid-cols-2 md:grid-cols-5 gap-6 text-center">
+          {[
+            { icon: "📋", label: "M3U Input", sub: "Raw GitHub URL" },
+            { icon: "⚙️", label: "Parser", sub: "Smart Extraction" },
+            { icon: "🎬", label: "TMDB", sub: "Fallback Metadata" },
+            { icon: "📡", label: "Stremio API", sub: "Catalog/Meta/Stream" },
+            { icon: "🔄", label: "Keep Alive", sub: "Auto Ping 10min" },
+          ].map((item, i) => (
+            <div key={i} className="flex flex-col items-center">
+              <div className="text-3xl mb-2">{item.icon}</div>
+              <div className="font-semibold text-sm text-white">{item.label}</div>
+              <div className="text-xs text-gray-500">{item.sub}</div>
+              {i < 4 && (
+                <div className="hidden md:block absolute translate-x-[4.5rem]">
+                  <ChevronRight size={16} className="text-purple-500/40" />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── FEATURES ───────────────────────────────────── */}
+      <section id="features" className="max-w-6xl mx-auto px-6 mb-24">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl font-bold text-white mb-3">Packed with Features</h2>
+          <p className="text-gray-400">Everything you need for a production-grade Stremio addon</p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6">
+          <FeatureCard
+            icon={Database}
+            title="Smart M3U Parsing"
+            desc="Extracts type, tvg-logo, group-title, IMDB rating, year, genre, duration, director, writers, and stars from complex M3U entries."
+            color="bg-purple-500/10 text-purple-400"
+          />
+          <FeatureCard
+            icon={Film}
+            title="TMDB Fallback"
+            desc="When M3U entries lack poster, description, or genre data, automatically fetches rich metadata from The Movie Database API."
+            color="bg-blue-500/10 text-blue-400"
+          />
+          <FeatureCard
+            icon={Filter}
+            title="Sort & Filter in Stremio"
+            desc="Each group-title becomes a separate catalog with genre filters. Search across titles, actors, and directors directly in Stremio."
+            color="bg-green-500/10 text-green-400"
+          />
+          <FeatureCard
+            icon={RefreshCw}
+            title="Auto-Refresh Every 6hrs"
+            desc="M3U source is automatically re-fetched and re-parsed every 6 hours to keep your catalog fresh with the latest content."
+            color="bg-amber-500/10 text-amber-400"
+          />
+          <FeatureCard
+            icon={Shield}
+            title="Render Keep-Alive"
+            desc="Built-in self-pinging mechanism every 10 minutes prevents Render's free tier from spinning down your server."
+            color="bg-red-500/10 text-red-400"
+          />
+          <FeatureCard
+            icon={Search}
+            title="Smart Catalog Groups"
+            desc="M3U group-titles become separate Stremio catalogs. An 'All Movies' catalog aggregates everything with sorting by year and rating."
+            color="bg-cyan-500/10 text-cyan-400"
+          />
+        </div>
+      </section>
+
+      {/* ── M3U FORMAT REFERENCE ───────────────────────── */}
+      <section id="m3u-ref" className="max-w-6xl mx-auto px-6 mb-24">
+        <div className="rounded-2xl bg-[#111127] border border-white/5 p-8">
+          <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
+            <FileText size={24} className="text-purple-400" />
+            Supported M3U Format
+          </h2>
+          <p className="text-gray-400 mb-6">The parser handles this exact format from your raw GitHub M3U file:</p>
+          <div className="code-block">
+            <pre className="p-4 text-[13px] leading-relaxed text-gray-300 overflow-x-auto">{`#EXTM3U
+
+#EXTINF:-1 type="movie" group-logo="" tvg-logo="https://image-url.jpg" group-title="VT 🎬 | Tamil Movies",Gandhi Talks (𝗜𝗠𝗗𝗕 6.6 2026 ‧ Comedy\\Drama\\Hindi ‧ 2h 10m Director Kishor Pandurang Belekar | Writers Kishor Pandurang Belekar | Stars Vijay Sethupathi ‧ Aditi Rao Hydari ‧ Mahesh Manjrekar)
+https://tentkotta.short.gy/AgADWB5903.mkv
+
+#EXTINF:-1 type="movie" tvg-logo="" group-title="VT 🎬 | Hindi Movies",Pushpa 2 (𝗜𝗠𝗗𝗕 6.2 2024 ‧ Action\\Drama ‧ 3h 20m Director Sukumar | Stars Allu Arjun ‧ Rashmika Mandanna)
+https://example.com/pushpa2.mkv`}</pre>
+          </div>
+          <div className="mt-6 grid md:grid-cols-2 gap-4">
+            <div className="bg-[#0d1117] rounded-lg p-4 border border-white/5">
+              <h4 className="text-sm font-semibold text-purple-300 mb-2">📌 Parsed Fields</h4>
+              <ul className="text-xs text-gray-400 space-y-1">
+                <li>• <IC>type</IC> — movie / series</li>
+                <li>• <IC>tvg-logo</IC> — poster URL</li>
+                <li>• <IC>group-title</IC> — catalog category</li>
+                <li>• <IC>group-logo</IC> — category icon</li>
+                <li>• Title, Year, IMDB Rating from name</li>
+                <li>• Genre, Duration, Director, Writers, Stars</li>
+              </ul>
+            </div>
+            <div className="bg-[#0d1117] rounded-lg p-4 border border-white/5">
+              <h4 className="text-sm font-semibold text-blue-300 mb-2">🔄 Fallback Logic</h4>
+              <ul className="text-xs text-gray-400 space-y-1">
+                <li>• If <IC>tvg-logo</IC> is empty → TMDB poster</li>
+                <li>• If no description → TMDB overview</li>
+                <li>• If genres missing → TMDB genres</li>
+                <li>• If director/cast empty → TMDB credits</li>
+                <li>• TMDB results are cached in memory</li>
+                <li>• Search by title + year for accuracy</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── TABS: DEPLOY / CODE ────────────────────────── */}
+      <section className="max-w-6xl mx-auto px-6 mb-24">
+        <div className="flex gap-2 mb-8 border-b border-white/10 pb-0">
+          {[
+            { key: "deploy" as const, icon: Rocket, label: "Deploy Guide" },
+            { key: "code" as const, icon: Terminal, label: "Source Code" },
+            { key: "m3u" as const, icon: Settings, label: "Configuration" },
+          ].map(({ key, icon: Icon, label }) => (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-all -mb-[1px] ${
+                activeTab === key
+                  ? "border-purple-500 text-purple-300"
+                  : "border-transparent text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              <Icon size={16} />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── DEPLOY TAB ──────────────────────────────── */}
+        {activeTab === "deploy" && (
+          <div id="deploy" className="space-y-2">
+            <StepCard num={1} title="Create a GitHub Repository">
+              <p className="text-gray-400 text-sm">
+                Create a new repo and add two files: <IC>server.js</IC> and <IC>package.json</IC>.
+                Copy them from the <strong className="text-white">Source Code</strong> tab.
+              </p>
+              <div className="code-block">
+                <pre className="p-3 text-sm text-gray-400">{`your-repo/
+├── server.js        # Main addon server
+├── package.json     # Dependencies
+├── render.yaml      # (Optional) Render blueprint
+└── .env.example     # Environment reference`}</pre>
               </div>
+            </StepCard>
+
+            <StepCard num={2} title="Sign Up on Render">
+              <p className="text-gray-400 text-sm">
+                Go to{" "}
+                <a href="https://render.com" target="_blank" className="text-purple-400 hover:underline inline-flex items-center gap-1">
+                  render.com <ExternalLink size={12} />
+                </a>{" "}
+                and sign up with your GitHub account (free).
+              </p>
+            </StepCard>
+
+            <StepCard num={3} title="Create a New Web Service">
+              <p className="text-gray-400 text-sm">Click <strong className="text-white">New → Web Service</strong>, connect your GitHub repo, then configure:</p>
+              <div className="bg-[#0d1117] rounded-lg border border-white/5 overflow-hidden">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {[
+                      ["Name", "stremio-m3u-addon"],
+                      ["Runtime", "Node"],
+                      ["Build Command", "npm install"],
+                      ["Start Command", "node server.js"],
+                      ["Plan", "Free"],
+                    ].map(([k, v]) => (
+                      <tr key={k} className="border-b border-white/5">
+                        <td className="px-4 py-2.5 text-gray-400 font-medium">{k}</td>
+                        <td className="px-4 py-2.5">
+                          <IC>{v}</IC>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </StepCard>
+
+            <StepCard num={4} title="Set Environment Variables">
+              <p className="text-gray-400 text-sm">
+                In the Render dashboard, go to <strong className="text-white">Environment → Add Environment Variable</strong>:
+              </p>
+              <div className="bg-[#0d1117] rounded-lg border border-white/5 overflow-hidden">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {[
+                      ["M3U_URL", "Your raw GitHub M3U URL", "✅ Required"],
+                      ["TMDB_API_KEY", "Your TMDB API key", "Optional"],
+                      ["RENDER_EXTERNAL_URL", "Your Render URL (e.g., https://stremio-m3u-addon.onrender.com)", "✅ For keep-alive"],
+                      ["REFRESH_HOURS", "6 (default)", "Optional"],
+                    ].map(([k, v, req]) => (
+                      <tr key={k} className="border-b border-white/5">
+                        <td className="px-4 py-2.5 font-mono text-purple-300 text-xs">{k}</td>
+                        <td className="px-4 py-2.5 text-gray-400 text-xs">{v}</td>
+                        <td className="px-4 py-2.5 text-xs">
+                          <span className={req.includes("Required") || req.includes("keep") ? "text-amber-400" : "text-gray-500"}>{req}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </StepCard>
+
+            <StepCard num={5} title="Deploy & Get Your Manifest URL">
+              <p className="text-gray-400 text-sm">
+                Click <strong className="text-white">Deploy</strong>. Once live, your manifest URL will be:
+              </p>
+              <div className="code-block">
+                <pre className="p-3 text-sm text-green-400">{`https://your-app-name.onrender.com/manifest.json`}</pre>
+              </div>
+            </StepCard>
+
+            <StepCard num={6} title="Install in Stremio">
+              <p className="text-gray-400 text-sm">Open Stremio, go to the <strong className="text-white">Addons</strong> page, and either:</p>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3 bg-[#0d1117] rounded-lg p-4 border border-white/5">
+                  <div className="w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-300 text-xs font-bold shrink-0 mt-0.5">A</div>
+                  <div>
+                    <p className="text-sm text-gray-300">Paste your manifest URL in the search box at the top of the Addons page</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 bg-[#0d1117] rounded-lg p-4 border border-white/5">
+                  <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-300 text-xs font-bold shrink-0 mt-0.5">B</div>
+                  <div>
+                    <p className="text-sm text-gray-300">
+                      Visit your addon's landing page and click the <strong className="text-white">Install in Stremio</strong> button
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </StepCard>
+          </div>
+        )}
+
+        {/* ── CODE TAB ────────────────────────────────── */}
+        {activeTab === "code" && (
+          <div id="code" className="space-y-4">
+            <div className="bg-[#111127] rounded-xl border border-white/5 p-4 mb-6 flex items-start gap-3">
+              <GitBranch size={20} className="text-purple-400 shrink-0 mt-0.5" />
               <div>
-                <h1 className="text-white font-extrabold text-lg leading-tight">VT Stremio Addon</h1>
-                <div className="flex items-center gap-2">
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    serverOnline === true  ? 'bg-green-400 animate-pulse' :
-                    serverOnline === false ? 'bg-red-500'                 :
-                    'bg-yellow-400 animate-pulse'
-                  }`} />
-                  <p className="text-gray-400 text-xs">
-                    {serverOnline === true  ? 'Server Online'  :
-                     serverOnline === false ? 'Server Offline' : 'Connecting…'}
+                <p className="text-sm text-gray-300">
+                  Create a new GitHub repository with these files. The <IC>server.js</IC> and <IC>package.json</IC> are
+                  the only required files for deployment.
+                </p>
+              </div>
+            </div>
+
+            <CodeBlock title="server.js" code={SERVER_CODE} language="JavaScript" defaultOpen={false} />
+            <CodeBlock title="package.json" code={PACKAGE_JSON_CODE} language="JSON" defaultOpen={true} />
+            <CodeBlock title="render.yaml" code={RENDER_YAML_CODE} language="YAML" defaultOpen={false} />
+            <CodeBlock title=".env.example" code={ENV_CODE} language="ENV" defaultOpen={true} />
+            <CodeBlock title="Dockerfile" code={DOCKERFILE_CODE} language="Docker" defaultOpen={false} />
+          </div>
+        )}
+
+        {/* ── CONFIG TAB ──────────────────────────────── */}
+        {activeTab === "m3u" && (
+          <div className="space-y-6">
+            <div className="rounded-2xl bg-[#111127] border border-white/5 p-8">
+              <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                <Settings size={22} className="text-purple-400" />
+                Environment Variables Reference
+              </h3>
+
+              <div className="space-y-6">
+                {/* M3U_URL */}
+                <div className="bg-[#0d1117] rounded-xl p-5 border border-white/5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Link2 size={16} className="text-green-400" />
+                    <h4 className="font-semibold text-white">M3U_URL</h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">Required</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-3">
+                    The raw GitHub URL pointing to your M3U playlist file. This is the source of all your content.
+                  </p>
+                  <div className="code-block">
+                    <pre className="p-3 text-xs text-gray-400">{`# Example
+M3U_URL=https://raw.githubusercontent.com/username/repo/main/playlist.m3u`}</pre>
+                  </div>
+                  <div className="mt-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                    <p className="text-xs text-amber-300">
+                      ⚠️ Make sure the URL returns raw text content, not the GitHub HTML page.
+                      Use <IC>raw.githubusercontent.com</IC> URLs.
+                    </p>
+                  </div>
+                </div>
+
+                {/* TMDB_API_KEY */}
+                <div className="bg-[#0d1117] rounded-xl p-5 border border-white/5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Key size={16} className="text-blue-400" />
+                    <h4 className="font-semibold text-white">TMDB_API_KEY</h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300">Optional</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-3">
+                    When M3U entries are missing poster images, descriptions, or genre information,
+                    the server will query TMDB to fill in the gaps. Get a free API key at:
+                  </p>
+                  <a
+                    href="https://www.themoviedb.org/settings/api"
+                    target="_blank"
+                    className="inline-flex items-center gap-1 text-sm text-blue-400 hover:underline"
+                  >
+                    themoviedb.org/settings/api <ExternalLink size={12} />
+                  </a>
+                </div>
+
+                {/* RENDER_EXTERNAL_URL */}
+                <div className="bg-[#0d1117] rounded-xl p-5 border border-white/5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Globe size={16} className="text-red-400" />
+                    <h4 className="font-semibold text-white">RENDER_EXTERNAL_URL</h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">Keep-Alive</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-3">
+                    Set this to your Render app's external URL. The server will self-ping every 10 minutes
+                    to prevent Render's free tier from spinning down.
+                  </p>
+                  <div className="code-block">
+                    <pre className="p-3 text-xs text-gray-400">{`RENDER_EXTERNAL_URL=https://stremio-m3u-addon.onrender.com`}</pre>
+                  </div>
+                </div>
+
+                {/* REFRESH_HOURS */}
+                <div className="bg-[#0d1117] rounded-xl p-5 border border-white/5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock size={16} className="text-amber-400" />
+                    <h4 className="font-semibold text-white">REFRESH_HOURS</h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-300">Default: 6</span>
+                  </div>
+                  <p className="text-sm text-gray-400">
+                    How often (in hours) to re-fetch and re-parse the M3U source. Set to a lower value
+                    if your playlist updates frequently.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Tabs */}
-            <nav className="flex gap-1">
-              {tabs.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setActiveTab(t.id)}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all
-                    ${activeTab === t.id
-                      ? 'bg-red-600 text-white shadow-lg shadow-red-900/40'
-                      : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
-                >
-                  <span>{t.icon}</span>
-                  <span className="hidden sm:inline">{t.label}</span>
-                </button>
-              ))}
-            </nav>
+            {/* Stremio Integration Details */}
+            <div className="rounded-2xl bg-[#111127] border border-white/5 p-8">
+              <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                <Play size={22} className="text-green-400" />
+                Stremio Integration Details
+              </h3>
 
-            {/* Stats */}
-            {status && (
-              <div className="hidden md:flex items-center gap-3 text-xs text-gray-400">
-                <span className="bg-gray-800 px-2 py-1 rounded-lg">
-                  📽 {status.total} movies
-                </span>
-                {filterOptions.genres.length > 0 && (
-                  <span className="bg-gray-800 px-2 py-1 rounded-lg">
-                    🎭 {filterOptions.genres.length} genres
-                  </span>
-                )}
-                {filterOptions.years.length > 0 && (
-                  <span className="bg-gray-800 px-2 py-1 rounded-lg">
-                    📅 {filterOptions.years[0]}–{filterOptions.years[filterOptions.years.length - 1]}
-                  </span>
-                )}
-                <span className={`px-2 py-1 rounded-lg ${
-                  status.config.tmdbConfigured
-                    ? 'bg-blue-900/50 text-blue-300'
-                    : 'bg-yellow-900/30 text-yellow-400'
-                }`}>
-                  {status.config.tmdbConfigured ? '🎭 TMDB Active' : '⚠️ No TMDB Key'}
-                </span>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="bg-[#0d1117] rounded-xl p-5 border border-white/5">
+                  <h4 className="text-sm font-semibold text-purple-300 mb-3">📡 API Endpoints</h4>
+                  <div className="space-y-2 text-xs font-mono">
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">GET</span>
+                      <span className="text-gray-400">/manifest.json</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">GET</span>
+                      <span className="text-gray-400">/catalog/:type/:id/:extra?.json</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">GET</span>
+                      <span className="text-gray-400">/meta/:type/:id.json</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">GET</span>
+                      <span className="text-gray-400">/stream/:type/:id.json</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">GET</span>
+                      <span className="text-gray-400">/health</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#0d1117] rounded-xl p-5 border border-white/5">
+                  <h4 className="text-sm font-semibold text-blue-300 mb-3">🎯 Catalog Features</h4>
+                  <ul className="text-xs text-gray-400 space-y-2">
+                    <li className="flex items-start gap-2">
+                      <Star size={12} className="text-amber-400 shrink-0 mt-0.5" />
+                      Sorted by year (newest first), then IMDB rating
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Filter size={12} className="text-green-400 shrink-0 mt-0.5" />
+                      Genre filter extracted from M3U metadata
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Search size={12} className="text-blue-400 shrink-0 mt-0.5" />
+                      Search by title, actor name, or director
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Database size={12} className="text-purple-400 shrink-0 mt-0.5" />
+                      Pagination with skip parameter (100 per page)
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Film size={12} className="text-red-400 shrink-0 mt-0.5" />
+                      Each group-title = separate Stremio catalog
+                    </li>
+                  </ul>
+                </div>
               </div>
-            )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── QUICK START CLI ────────────────────────────── */}
+      <section className="max-w-6xl mx-auto px-6 mb-24">
+        <div className="rounded-2xl bg-gradient-to-br from-purple-900/20 to-blue-900/20 border border-purple-500/10 p-8">
+          <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
+            <Terminal size={24} className="text-purple-400" />
+            Quick Start (Local Development)
+          </h2>
+          <p className="text-gray-400 mb-6">Run the addon locally before deploying:</p>
+
+          <div className="space-y-3">
+            {[
+              { label: "Clone & Install", cmd: "git clone https://github.com/your-user/stremio-m3u-addon.git\ncd stremio-m3u-addon\nnpm install" },
+              { label: "Set Environment", cmd: 'export M3U_URL="https://raw.githubusercontent.com/user/repo/main/playlist.m3u"\nexport TMDB_API_KEY="your_tmdb_key_here"  # optional' },
+              { label: "Start Server", cmd: "npm start" },
+              { label: "Test It", cmd: "# Open in browser:\n# http://localhost:7000/manifest.json\n# http://localhost:7000/health\n# http://localhost:7000/catalog/movie/m3u_all.json" },
+            ].map((step, i) => (
+              <div key={i} className="bg-[#0d1117] rounded-lg border border-white/5 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2 bg-[#161b22]">
+                  <span className="text-xs text-gray-400">{step.label}</span>
+                  <CopyBtn text={step.cmd} />
+                </div>
+                <pre className="p-3 text-xs text-gray-300 overflow-x-auto">{step.cmd}</pre>
+              </div>
+            ))}
           </div>
         </div>
-      </header>
+      </section>
 
-      {/* ── Main ────────────────────────────────────────────────────────────── */}
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      {/* ── HOW IT WORKS ───────────────────────────────── */}
+      <section className="max-w-6xl mx-auto px-6 mb-24">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl font-bold text-white mb-3">How It Works</h2>
+        </div>
 
-        {/* Server offline */}
-        {serverOnline === false && (
-          <div className="bg-red-900/30 border border-red-700 rounded-xl p-5 text-center">
-            <p className="text-red-300 font-semibold text-lg mb-1">⚠️ Server Not Running</p>
-            <p className="text-red-400/80 text-sm">
-              Start the addon server:{' '}
-              <code className="bg-black/30 px-2 py-0.5 rounded font-mono text-xs">
-                node --loader tsx/esm server/index.ts
-              </code>
+        <div className="grid md:grid-cols-4 gap-6">
+          {[
+            {
+              step: "1",
+              emoji: "📥",
+              title: "Fetch M3U",
+              desc: "Server fetches your raw GitHub M3U file on startup and every 6 hours",
+            },
+            {
+              step: "2",
+              emoji: "🔍",
+              title: "Parse & Extract",
+              desc: "Smart parser extracts all metadata from #EXTINF lines: title, year, rating, cast, etc.",
+            },
+            {
+              step: "3",
+              emoji: "🎬",
+              title: "TMDB Enrich",
+              desc: "Missing posters or details? TMDB API fills the gaps with rich movie metadata",
+            },
+            {
+              step: "4",
+              emoji: "📡",
+              title: "Serve to Stremio",
+              desc: "Catalogs, metadata, and streams served via Stremio addon protocol with sort & filter",
+            },
+          ].map((item) => (
+            <div key={item.step} className="text-center p-6 rounded-2xl bg-[#111127] border border-white/5">
+              <div className="text-4xl mb-3">{item.emoji}</div>
+              <div className="inline-flex w-8 h-8 rounded-full bg-purple-500/20 items-center justify-center text-purple-300 text-sm font-bold mb-3">
+                {item.step}
+              </div>
+              <h4 className="font-semibold text-white mb-2">{item.title}</h4>
+              <p className="text-xs text-gray-400 leading-relaxed">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── KEEP ALIVE EXPLAINED ───────────────────────── */}
+      <section className="max-w-6xl mx-auto px-6 mb-24">
+        <div className="rounded-2xl bg-[#111127] border border-white/5 p-8">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Heart size={24} className="text-red-400" />
+            Render Free Tier Keep-Alive Strategy
+          </h2>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h4 className="text-sm font-semibold text-red-300 mb-3">⚠️ The Problem</h4>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                Render's free tier spins down your service after 15 minutes of inactivity.
+                This causes a ~30 second cold start delay when someone tries to use your addon.
+              </p>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-green-300 mb-3">✅ The Solution</h4>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                The server self-pings its own <IC>/health</IC> endpoint every 10 minutes using the
+                <IC>RENDER_EXTERNAL_URL</IC> environment variable. This keeps the service warm 24/7.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 code-block">
+            <pre className="p-4 text-xs text-gray-400">{`// Built-in keep-alive — no external cron service needed!
+setInterval(async () => {
+  await axios.get(RENDER_EXTERNAL_URL + "/health");
+  // Pings every 10 minutes → server never sleeps
+}, 10 * 60 * 1000);`}</pre>
+          </div>
+
+          <div className="mt-4 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+            <p className="text-xs text-blue-300">
+              💡 <strong>Pro tip:</strong> As a backup, you can also set up a free cron job at{" "}
+              <a href="https://cron-job.org" target="_blank" className="underline">cron-job.org</a>{" "}
+              to ping your <IC>/health</IC> endpoint every 5 minutes.
             </p>
           </div>
-        )}
+        </div>
+      </section>
 
-        {/* Error */}
-        {error && (
-          <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 flex items-start gap-3">
-            <span className="text-red-400">⚠️</span>
-            <p className="text-red-300 text-sm flex-1">{error}</p>
-            <button onClick={() => setError(null)} className="text-gray-500 hover:text-white">✕</button>
-          </div>
-        )}
-
-        {/* ── Catalog Tab ───────────────────────────────────────────────────── */}
-        {activeTab === 'catalog' && (
-          <div className="space-y-5">
-
-            <StatusBar status={status} />
-
-            {/* Filter Bar */}
-            <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-4">
-              <FilterBar
-                filters={filters}
-                filterOptions={filterOptions}
-                onChange={handleFilterChange}
-                onClear={handleClearFilters}
-                total={totalEntries}
-                showing={entries.length}
-                loading={loading}
-              />
+      {/* ── FOOTER ─────────────────────────────────────── */}
+      <footer className="border-t border-white/5 py-12">
+        <div className="max-w-6xl mx-auto px-6 text-center">
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-sm">
+              🎬
             </div>
-
-            {/* Refresh action */}
-            <div className="flex justify-end">
-              <button
-                onClick={handleRefresh}
-                disabled={refreshing || serverOnline === false}
-                className="bg-red-600 hover:bg-red-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
-              >
-                {refreshing ? <><Spinner /> Refreshing…</> : '⚡ Refresh M3U'}
-              </button>
-            </div>
-
-            {/* Empty state */}
-            {entries.length === 0 && !loading ? (
-              <div className="text-center py-24">
-                <div className="text-7xl mb-4">🎬</div>
-                <p className="text-gray-400 text-xl font-semibold mb-2">
-                  {serverOnline === false
-                    ? 'Start the server to load movies'
-                    : (filters.genre || filters.year || filters.language || filters.search)
-                    ? 'No movies match the selected filters'
-                    : 'No movies loaded yet'}
-                </p>
-                <p className="text-gray-600 text-sm">
-                  {serverOnline === true && !filters.genre && !filters.year && !filters.language && !filters.search
-                    ? 'Go to Configuration, set your M3U URL and click Refresh M3U'
-                    : filters.genre || filters.year || filters.language || filters.search
-                    ? 'Try adjusting or clearing your filters'
-                    : 'Run: node --loader tsx/esm server/index.ts'}
-                </p>
-                {(filters.genre || filters.year || filters.language || filters.search) && (
-                  <button
-                    onClick={handleClearFilters}
-                    className="mt-4 bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-xl text-sm font-medium transition-colors"
-                  >
-                    Clear Filters
-                  </button>
-                )}
-              </div>
-            ) : (
-              /* Movie Grid */
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                {entries.map(e => (
-                  <MovieCard key={e.id} entry={e} onRemove={handleRemove} />
-                ))}
-              </div>
-            )}
-
-            {/* Load More */}
-            {entries.length < totalEntries && entries.length > 0 && (
-              <div className="flex justify-center pt-4">
-                <button
-                  onClick={handleLoadMore}
-                  disabled={loading}
-                  className="bg-gray-800 hover:bg-gray-700 text-white px-8 py-3 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  {loading
-                    ? <><Spinner /> Loading…</>
-                    : `Load More (${totalEntries - entries.length} remaining)`}
-                </button>
-              </div>
-            )}
+            <span className="font-bold">M3U Stremio Addon</span>
           </div>
-        )}
-
-        {/* ── Config Tab ────────────────────────────────────────────────────── */}
-        {activeTab === 'config' && (
-          <ConfigPanel
-            status={status}
-            onSave={handleSaveConfig}
-            onRefresh={handleRefresh}
-            onFullRefresh={handleFullRefresh}
-            saving={saving}
-            refreshing={refreshing}
-          />
-        )}
-
-        {/* ── Deploy Tab ────────────────────────────────────────────────────── */}
-        {activeTab === 'deploy' && (
-          <DeployPanel addonUrl={status?.addonUrl} />
-        )}
-      </main>
-
-      {/* ── Footer ──────────────────────────────────────────────────────────── */}
-      <footer className="border-t border-gray-800 mt-12 py-6">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-gray-500 text-xs">
-          <div className="flex items-center gap-2">
-            <span>🎬</span>
-            <span>VT Stremio Addon • M3U + TMDB Powered</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span>Filters: Genre · Year · Language · Search</span>
-            <span>Keep-alive: 14 min</span>
-            <span>Auto-refresh: {status?.config.refreshIntervalHours ?? 6}h</span>
-            <span className="text-green-400">● Free Tier Ready</span>
+          <p className="text-sm text-gray-500 mb-4">
+            Built with Express.js • TMDB API • Deployed on Render Free Tier
+          </p>
+          <div className="flex items-center justify-center gap-1 text-sm text-gray-600">
+            Made with <Coffee size={14} className="text-amber-500" /> for the Stremio community
           </div>
         </div>
       </footer>
