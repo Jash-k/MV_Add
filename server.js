@@ -33,6 +33,7 @@ function parseM3U(raw) {
   var lines = raw.split(/\r?\n/);
   var items = [];
   var curExtInf = null;
+  var insertionIndex = 0;
 
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
@@ -46,7 +47,9 @@ function parseM3U(raw) {
         if (item) {
           item.streamUrl = trimmed;
           item.id = makeId(item);
+          item.insertionIndex = insertionIndex;
           items.push(item);
+          insertionIndex++;
         }
         curExtInf = null;
       } else if (trimmed === "" || trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXTVLCOPT")) {
@@ -255,11 +258,18 @@ async function getSource(m3uUrl) {
     }
     for (var g2 of Object.keys(catalogMap)) {
       catalogMap[g2].sort(function(a, b) {
-        if (a.year && b.year && a.year !== b.year) return b.year - a.year;
-        if (a.imdbRating && b.imdbRating) return b.imdbRating - a.imdbRating;
-        return (a.title || "").localeCompare(b.title || "");
+        var ay = a.year || 0;
+        var by = b.year || 0;
+        if (ay !== by) return by - ay;
+        return b.insertionIndex - a.insertionIndex;
       });
     }
+    items.sort(function(a, b) {
+      var ay = a.year || 0;
+      var by = b.year || 0;
+      if (ay !== by) return by - ay;
+      return b.insertionIndex - a.insertionIndex;
+    });
     var groupTitles = Object.keys(catalogMap).sort();
     var result = { items: items, catalogMap: catalogMap, groupTitles: groupTitles, ts: now };
     sourceCache[m3uUrl] = result;
@@ -376,35 +386,26 @@ function buildManifest(source) {
   var items = source.items;
   var catalogMap = source.catalogMap;
   var groupTitles = source.groupTitles;
+  var years = source.years || [];
+
+  // Year options as strings for Stremio genre filter
+  var yearOptions = years.map(function(y) { return String(y); });
+
   var catalogs = [];
   if (items.length > 0) {
+    var allExtra = [{ name: "skip", isRequired: false }];
+    if (yearOptions.length > 0) {
+      allExtra.unshift({ name: "genre", isRequired: false, options: yearOptions });
+    }
     catalogs.push({
       type: "movie", id: "m3u_all", name: "All Movies (" + items.length + ")",
-      extra: [
-        { name: "search", isRequired: false },
-        { name: "genre", isRequired: false, options: collectGenres(items) },
-        { name: "skip", isRequired: false },
-      ],
-    });
-  }
-  for (var i = 0; i < groupTitles.length; i++) {
-    var g = groupTitles[i];
-    var count = (catalogMap[g] || []).length;
-    catalogs.push({
-      type: "movie",
-      id: "m3u_" + g.replace(/[^a-zA-Z0-9]/g, "_"),
-      name: g + " (" + count + ")",
-      extra: [
-        { name: "search", isRequired: false },
-        { name: "genre", isRequired: false, options: collectGenres(catalogMap[g] || []) },
-        { name: "skip", isRequired: false },
-      ],
+      extra: allExtra
     });
   }
   return {
     id: "community.m3u.stremio.addon", version: "3.0.0",
     name: "M3U Stremio Addon",
-    description: "Stream " + items.length + " titles from M3U playlists with smart catalogs, sort & filter",
+    description: "Stream " + items.length + " titles from M3U playlists — Year filter, Latest first",
     logo: "https://img.icons8.com/color/512/popcorn-time.png",
     resources: ["catalog", "meta", "stream"], types: ["movie"],
     catalogs: catalogs,
@@ -526,11 +527,11 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async function(req, res) {
         if (eq !== -1) extras[p.slice(0, eq)] = p.slice(eq + 1);
       });
     }
-    var search = (extras.search || "").toLowerCase();
-    var genre = extras.genre || "";
+    var yearFilter = extras.genre || ""; // Stremio sends year filter as "genre"
     var skip = parseInt(extras.skip, 10) || 0;
     var limit = 100;
 
+    // Get items — already sorted by year desc, then insertion desc
     var items;
     if (id === "m3u_all") {
       items = source.items.slice();
@@ -539,25 +540,18 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async function(req, res) {
       items = groupKey ? (source.catalogMap[groupKey] || []).slice() : [];
     }
 
-    if (search) {
-      items = items.filter(function(it) {
-        return (it.title || "").toLowerCase().includes(search) ||
-          (it.rawName || "").toLowerCase().includes(search) ||
-          (it.director || "").toLowerCase().includes(search) ||
-          (it.stars || []).some(function(s) { return s.toLowerCase().includes(search); });
-      });
-    }
-    if (genre) {
-      items = items.filter(function(it) {
-        return (it.genre || []).includes(genre) || it.language === genre;
-      });
+    // YEAR FILTER ONLY
+    if (yearFilter) {
+      var filterYear = parseInt(yearFilter, 10);
+      if (!isNaN(filterYear)) {
+        items = items.filter(function(it) {
+          return it.year === filterYear;
+        });
+      }
     }
 
-    items.sort(function(a, b) {
-      if (a.year && b.year && a.year !== b.year) return b.year - a.year;
-      if (a.imdbRating && b.imdbRating && a.imdbRating !== b.imdbRating) return b.imdbRating - a.imdbRating;
-      return (a.title || "").localeCompare(b.title || "");
-    });
+    // Items are already sorted
+    // No re-sorting needed
 
     var page = items.slice(skip, skip + limit);
     var metas = [];
