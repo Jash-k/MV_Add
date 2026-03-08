@@ -9,6 +9,9 @@ const REFRESH_HOURS = parseInt(process.env.REFRESH_HOURS, 10) || 6;
 const REFRESH_MS = REFRESH_HOURS * 3600000;
 const KEEP_ALIVE_MS = 10 * 60000;
 
+// Catalog name - change this to customize
+const CATALOG_NAME = "JaSHMovieS🍿🎥🎬";
+
 const sourceCache = {};
 const tmdbCache = {};
 
@@ -259,23 +262,7 @@ async function getSource(m3uUrl) {
     var items = parseM3U(rawText);
     console.log("[M3U] Parsed", items.length, "items");
 
-    var catalogMap = {};
-    for (var i = 0; i < items.length; i++) {
-      var g = items[i].group || "Uncategorized";
-      if (!catalogMap[g]) catalogMap[g] = [];
-      catalogMap[g].push(items[i]);
-    }
-
-    // Get group titles
-    var groupTitles = Object.keys(catalogMap).sort();
-
     // Sort by insertion order ASCENDING (first in M3U = first in list)
-    // This means newly added items at TOP of M3U will appear FIRST
-    for (var g2 of Object.keys(catalogMap)) {
-      catalogMap[g2].sort(function(a, b) {
-        return a.insertionIndex - b.insertionIndex;
-      });
-    }
     items.sort(function(a, b) {
       return a.insertionIndex - b.insertionIndex;
     });
@@ -288,47 +275,18 @@ async function getSource(m3uUrl) {
     var years = Object.keys(yearSet).map(Number).sort(function(a, b) { return b - a; });
 
     var result = {
-      items: items, catalogMap: catalogMap,
-      groupTitles: groupTitles, years: years, ts: now
+      items: items,
+      years: years,
+      ts: now
     };
     sourceCache[m3uUrl] = result;
-    console.log("[M3U]", items.length, "items in", groupTitles.length, "groups:", groupTitles.join(", "));
+    console.log("[M3U]", items.length, "items loaded");
     return result;
   } catch (err) {
     console.error("[M3U] Fetch error:", err.message);
     if (cached) return cached;
-    return { items: [], catalogMap: {}, groupTitles: [], years: [], ts: now };
+    return { items: [], years: [], ts: now };
   }
-}
-
-// ── Filter source by selected groups ────────────────────
-function filterSource(source, selectedGroups) {
-  if (!selectedGroups || !selectedGroups.length) return source;
-  var filteredMap = {};
-  var filteredItems = [];
-  var filteredTitles = [];
-  for (var i = 0; i < selectedGroups.length; i++) {
-    var g = selectedGroups[i];
-    if (source.catalogMap[g]) {
-      filteredMap[g] = source.catalogMap[g];
-      filteredItems = filteredItems.concat(source.catalogMap[g]);
-      filteredTitles.push(g);
-    }
-  }
-  filteredTitles.sort();
-  
-  // Re-sort filtered items by insertion index
-  filteredItems.sort(function(a, b) {
-    return a.insertionIndex - b.insertionIndex;
-  });
-  
-  return {
-    items: filteredItems,
-    catalogMap: filteredMap,
-    groupTitles: filteredTitles,
-    years: source.years,
-    ts: source.ts
-  };
 }
 
 // ── Build Stremio Meta ──────────────────────────────────
@@ -391,23 +349,7 @@ async function toMeta(item, tmdbKey, full) {
   return meta;
 }
 
-// ── Helpers ─────────────────────────────────────────────
-function collectGenres(items) {
-  var s = new Set();
-  for (var i = 0; i < items.length; i++) {
-    if (items[i].genre) items[i].genre.forEach(function(g) { s.add(g); });
-    if (items[i].language) s.add(items[i].language);
-  }
-  return Array.from(s).sort();
-}
-
-function groupIdToKey(catalogId, groupTitles) {
-  for (var i = 0; i < groupTitles.length; i++) {
-    if (catalogId === "m3u_" + groupTitles[i].replace(/[^a-zA-Z0-9]/g, "_")) return groupTitles[i];
-  }
-  return null;
-}
-
+// ── Build Manifest (Single Catalog) ─────────────────────
 function buildManifest(source) {
   var items = source.items;
   var years = source.years || [];
@@ -419,7 +361,7 @@ function buildManifest(source) {
   if (items.length > 0) {
     var allExtra = [{ name: "skip", isRequired: false }];
     
-    // Add ONLY year filter (Stremio uses "genre" field for custom filters)
+    // Add ONLY year filter
     if (yearOptions.length > 0) {
       allExtra.unshift({ 
         name: "genre", 
@@ -428,19 +370,20 @@ function buildManifest(source) {
       });
     }
     
+    // Single catalog with custom name
     catalogs.push({
       type: "movie", 
-      id: "m3u_all", 
-      name: "All Movies (" + items.length + ")",
+      id: "jashmovies", 
+      name: CATALOG_NAME,
       extra: allExtra
     });
   }
   
   return {
-    id: "community.m3u.stremio.addon", 
+    id: "community.jashmovies.addon", 
     version: "3.0.0",
-    name: "M3U Stremio Addon",
-    description: "Stream " + items.length + " titles from M3U playlists",
+    name: CATALOG_NAME,
+    description: "Stream " + items.length + " movies from " + CATALOG_NAME,
     logo: "https://img.icons8.com/color/512/popcorn-time.png",
     resources: ["catalog", "meta", "stream"], 
     types: ["movie"],
@@ -477,22 +420,6 @@ app.post("/api/validate", async function(req, res) {
   if (!m3uUrl) return res.json({ ok: false, error: "No URL provided" });
   try {
     var source = await getSource(m3uUrl);
-    var groupCounts = source.groupTitles.map(function(g) {
-      return { name: g, count: (source.catalogMap[g] || []).length };
-    });
-    var groupSamples = {};
-    for (var i = 0; i < source.groupTitles.length; i++) {
-      var g = source.groupTitles[i];
-      var grpItems = source.catalogMap[g] || [];
-      groupSamples[g] = grpItems.slice(0, 5).map(function(it) {
-        return {
-          title: it.title, year: it.year, rating: it.imdbRating,
-          poster: it.poster, genres: it.genre, duration: it.duration,
-          director: it.director, stars: it.stars
-        };
-      });
-    }
-    var allGenres = collectGenres(source.items);
     var withPoster = source.items.filter(function(it) { return !!it.poster; }).length;
     var rated = source.items.filter(function(it) { return it.imdbRating; });
     var avgRating = rated.length ? (rated.reduce(function(s, it) { return s + it.imdbRating; }, 0) / rated.length).toFixed(1) : null;
@@ -500,12 +427,24 @@ app.post("/api/validate", async function(req, res) {
     var minYear = years.length ? Math.min.apply(null, years) : null;
     var maxYear = years.length ? Math.max.apply(null, years) : null;
 
+    // Sample movies (first 5)
+    var samples = source.items.slice(0, 5).map(function(it) {
+      return {
+        title: it.title, year: it.year, rating: it.imdbRating,
+        poster: it.poster, genres: it.genre, duration: it.duration,
+        director: it.director, stars: it.stars
+      };
+    });
+
     res.json({
-      ok: true, totalItems: source.items.length,
-      groups: source.groupTitles, groupCounts: groupCounts,
-      groupSamples: groupSamples, allGenres: allGenres,
-      withPoster: withPoster, avgRating: avgRating,
-      minYear: minYear, maxYear: maxYear
+      ok: true, 
+      totalItems: source.items.length,
+      samples: samples,
+      withPoster: withPoster, 
+      avgRating: avgRating,
+      minYear: minYear, 
+      maxYear: maxYear,
+      yearCount: source.years.length
     });
   } catch (err) {
     console.error("[VALIDATE]", err);
@@ -517,11 +456,9 @@ app.post("/api/validate", async function(req, res) {
 app.post("/api/config", function(req, res) {
   var m3uUrl = (req.body && req.body.m3uUrl) || "";
   var tmdbKey = (req.body && req.body.tmdbKey) || "";
-  var groups = (req.body && req.body.groups) || [];
   if (!m3uUrl) return res.json({ ok: false, error: "M3U URL is required" });
   var config = { m3uUrl: m3uUrl };
   if (tmdbKey) config.tmdbKey = tmdbKey;
-  if (groups && groups.length > 0) config.groups = groups;
   var encoded = encodeConfig(config);
   var base = getBaseUrl(req);
   res.json({
@@ -537,7 +474,6 @@ app.get("/:config/manifest.json", async function(req, res) {
   if (!cfg || !cfg.m3uUrl) return res.status(400).json({ error: "Invalid config" });
   try {
     var source = await getSource(cfg.m3uUrl);
-    source = filterSource(source, cfg.groups);
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.json(buildManifest(source));
@@ -546,15 +482,13 @@ app.get("/:config/manifest.json", async function(req, res) {
   }
 });
 
-// ── Stremio: Catalog ────────────────────────────────────
+// ── Stremio: Catalog (Single catalog) ───────────────────
 app.get("/:config/catalog/:type/:id/:extra?.json", async function(req, res) {
   var cfg = decodeConfig(req.params.config);
   if (!cfg || !cfg.m3uUrl) return res.json({ metas: [] });
   try {
     var source = await getSource(cfg.m3uUrl);
-    source = filterSource(source, cfg.groups);
     var tmdbKey = cfg.tmdbKey || DEFAULT_TMDB;
-    var id = req.params.id;
     var extras = {};
     var extraStr = req.params.extra || "";
     if (extraStr) {
@@ -567,14 +501,8 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async function(req, res) {
     var skip = parseInt(extras.skip, 10) || 0;
     var limit = 100;
 
-    // Get items - already sorted by insertion order (ascending)
-    var items;
-    if (id === "m3u_all") {
-      items = source.items.slice();
-    } else {
-      var groupKey = groupIdToKey(id, source.groupTitles);
-      items = groupKey ? (source.catalogMap[groupKey] || []).slice() : [];
-    }
+    // Get all items - already sorted by insertion order (ascending)
+    var items = source.items.slice();
 
     // Apply YEAR filter only
     if (yearFilter) {
@@ -629,11 +557,11 @@ app.get("/:config/stream/:type/:id.json", async function(req, res) {
     if (!item || !item.streamUrl) return res.json({ streams: [] });
     var streamTitle = item.title;
     if (item.duration) streamTitle += " (" + item.duration + ")";
-    if (item.group) streamTitle += "\n" + item.group;
     res.json({
       streams: [{
-        title: streamTitle, url: item.streamUrl,
-        behaviorHints: { notWebReady: false, bingeGroup: item.group || "default" },
+        title: streamTitle, 
+        url: item.streamUrl,
+        behaviorHints: { notWebReady: false, bingeGroup: "jashmovies" },
       }],
     });
   } catch (err) {
@@ -677,7 +605,7 @@ setInterval(function() {
 
 
 // ══════════════════════════════════════════════════════════
-//  CONFIGURE HTML — self-contained with group selection
+//  CONFIGURE HTML — Simplified for single catalog
 // ══════════════════════════════════════════════════════════
 function getConfigureHTML() {
   return [
@@ -686,7 +614,7 @@ function getConfigureHTML() {
     '<head>',
     '<meta charset="UTF-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
-    '<title>M3U Stremio Addon - Configure</title>',
+    '<title>' + CATALOG_NAME + ' - Configure</title>',
     '<style>' + getCSS() + '</style>',
     '</head>',
     '<body>',
@@ -755,41 +683,23 @@ function getCSS() {
     '.stat-card .val{font-size:1.4rem;font-weight:800}',
     '.stat-card .lbl{font-size:.65rem;color:#555;margin-top:.15rem}',
     '.text-blue{color:#60a5fa}.text-green{color:#4ade80}.text-yellow{color:#facc15}.text-purple{color:#a78bfa}.text-orange{color:#fb923c}',
-    '.group-item{border-bottom:1px solid #1e1e3a;overflow:hidden}',
-    '.group-item:last-child{border-bottom:none}',
-    '.group-header{display:flex;align-items:center;gap:.5rem;padding:.75rem 1.25rem;transition:background .15s}',
-    '.group-header:hover{background:#16162e}',
-    '.group-cb{width:18px;height:18px;accent-color:#8b5cf6;cursor:pointer;flex-shrink:0}',
-    '.group-toggle{flex:1;display:flex;align-items:center;justify-content:space-between;background:none;border:none;color:#e0e0e0;cursor:pointer;text-align:left;font-size:.85rem;padding:0}',
-    '.group-name{font-weight:600;display:flex;align-items:center;gap:.5rem}',
-    '.group-count{background:rgba(139,92,246,.15);color:#a78bfa;padding:.2rem .6rem;border-radius:2rem;font-size:.8rem;font-weight:700}',
-    '.group-detail{padding:0 1.25rem 1rem;display:none}',
-    '.group-detail.open{display:block}',
-    '.sample-item{display:flex;align-items:center;gap:.5rem;padding:.35rem 0;font-size:.75rem}',
-    '.sample-poster{width:28px;height:40px;object-fit:cover;border-radius:.25rem;background:#1e1e3a;flex-shrink:0}',
-    '.sample-title{color:#ccc;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-    '.sample-year{color:#555;font-size:.7rem}',
-    '.sample-rating{color:#facc15;font-size:.7rem}',
-    '.genre-pill{display:inline-block;padding:.15rem .4rem;background:#0a0a1a;border:1px solid #1e1e3a;border-radius:.35rem;font-size:.6rem;color:#888;margin:.15rem .1rem}',
-    '.select-bar{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1.25rem;background:rgba(139,92,246,.04);border-bottom:1px solid #1e1e3a;flex-wrap:wrap;gap:.5rem}',
-    '.select-bar .sel-info{font-size:.85rem;font-weight:700;color:#a78bfa}',
-    '.select-bar .sel-actions{display:flex;gap:.5rem}',
-    '.sel-btn{background:rgba(139,92,246,.1);color:#a78bfa;border:1px solid rgba(139,92,246,.2);padding:.3rem .6rem;font-size:.7rem;cursor:pointer;border-radius:.35rem;font-weight:600}',
-    '.sel-btn:hover{background:rgba(139,92,246,.2)}',
+    '.sample-item{display:flex;align-items:center;gap:.75rem;padding:.5rem 0;font-size:.8rem;border-bottom:1px solid #1e1e3a}',
+    '.sample-item:last-child{border-bottom:none}',
+    '.sample-poster{width:40px;height:56px;object-fit:cover;border-radius:.35rem;background:#1e1e3a;flex-shrink:0}',
+    '.sample-info{flex:1;min-width:0}',
+    '.sample-title{color:#e0e0e0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.sample-meta{color:#666;font-size:.7rem;margin-top:.15rem}',
+    '.sample-rating{color:#facc15;font-size:.75rem}',
     '.addon-card{border-color:rgba(34,197,94,.2)}',
     '.addon-card .card-header{background:linear-gradient(135deg,rgba(34,197,94,.08),rgba(16,185,129,.08));border-bottom-color:rgba(34,197,94,.2)}',
     '.url-box{display:flex;align-items:center;gap:.5rem;background:#0a0a1a;padding:.75rem 1rem;border-radius:.75rem;border:1px solid #2a2a4a;margin-bottom:1rem}',
     '.url-box code{flex:1;font-size:.7rem;color:#60a5fa;word-break:break-all;font-family:monospace}',
     '.alert{padding:1rem 1.25rem;border-radius:.75rem;font-size:.8rem;margin-bottom:1rem;display:flex;align-items:flex-start;gap:.75rem}',
     '.alert-error{background:rgba(248,113,113,.04);border:1px solid rgba(248,113,113,.15);color:#f87171}',
-    '.alert-warn{background:rgba(250,204,21,.04);border:1px solid rgba(250,204,21,.15);color:#facc15}',
     '.alert-text{color:#aaa;font-size:.78rem;line-height:1.5}',
     '.info-box{background:rgba(139,92,246,.04);border:1px solid rgba(139,92,246,.15);border-radius:.75rem;padding:1rem;margin-top:1rem}',
     '.info-box h4{color:#a78bfa;font-size:.85rem;margin-bottom:.35rem}',
     '.info-box p{color:#666;font-size:.75rem;line-height:1.5}',
-    '.selected-summary{text-align:center;padding:1rem;margin:1rem 0;background:rgba(139,92,246,.04);border:1px solid rgba(139,92,246,.12);border-radius:.75rem}',
-    '.selected-summary .sel-num{font-size:2.5rem;font-weight:900;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1}',
-    '.selected-summary .sel-lbl{color:#888;font-size:.85rem;margin-top:.25rem}',
     '@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}',
     '.fade-in{animation:fadeIn .4s ease}',
     '@keyframes countUp{from{opacity:0;transform:scale(0.5)}to{opacity:1;transform:scale(1)}}',
@@ -801,8 +711,8 @@ function getHeaderHTML() {
   return [
     '<div class="header">',
     '  <div style="font-size:3rem;margin-bottom:.5rem">&#127916;</div>',
-    '  <h1>M3U Stremio Addon</h1>',
-    '  <p>v3.0 &middot; Enter M3U URL &rarr; Select catalogs &rarr; Install in Stremio</p>',
+    '  <h1>' + CATALOG_NAME + '</h1>',
+    '  <p>v3.0 &middot; Enter M3U URL &rarr; Scan &rarr; Install in Stremio</p>',
     '</div>'
   ].join('\n');
 }
@@ -812,7 +722,7 @@ function getStepsHTML() {
     '<div class="steps">',
     '  <span class="step active" id="step1">&#9312; Enter URL</span>',
     '  <span class="step-arrow">&rarr;</span>',
-    '  <span class="step" id="step2">&#9313; Select Groups</span>',
+    '  <span class="step" id="step2">&#9313; Scan</span>',
     '  <span class="step-arrow">&rarr;</span>',
     '  <span class="step" id="step3">&#9314; Get Link</span>',
     '  <span class="step-arrow">&rarr;</span>',
@@ -826,7 +736,7 @@ function getFormHTML() {
     '<div class="card">',
     '  <div class="card-header">',
     '    <h2>&#9881;&#65039; Configure Your Source</h2>',
-    '    <p>Paste your raw M3U URL, scan it, then select which catalogs you want</p>',
+    '    <p>Paste your raw M3U URL and scan to verify</p>',
     '  </div>',
     '  <div class="card-body">',
     '    <label>M3U Playlist URL <span class="req">*</span></label>',
@@ -850,13 +760,13 @@ function getFormHTML() {
 function getScript() {
   return [
     '(function() {',
+    '  var CATALOG_NAME = "' + CATALOG_NAME + '";',
     '  var m3uInput = document.getElementById("m3uUrl");',
     '  var scanBtn = document.getElementById("scanBtn");',
     '  var resultsDiv = document.getElementById("results");',
     '  var tmdbToggle = document.getElementById("tmdbToggle");',
     '  var tmdbSection = document.getElementById("tmdbSection");',
     '  var scanData = null;',
-    '  var selectedGroups = new Set();',
     '',
     '  tmdbToggle.addEventListener("click", function() {',
     '    tmdbSection.classList.toggle("hidden");',
@@ -867,7 +777,6 @@ function getScript() {
     '    setStep(1);',
     '    resultsDiv.innerHTML = "";',
     '    scanData = null;',
-    '    selectedGroups.clear();',
     '  });',
     '',
     '  scanBtn.addEventListener("click", doScan);',
@@ -919,11 +828,6 @@ function getScript() {
     '      }',
     '',
     '      scanData = data;',
-    '      selectedGroups.clear();',
-    '      var gc = data.groupCounts || [];',
-    '      for (var i = 0; i < gc.length; i++) {',
-    '        selectedGroups.add(gc[i].name);',
-    '      }',
     '      setStep(2);',
     '      renderResults();',
     '    } catch (err) {',
@@ -937,158 +841,64 @@ function getScript() {
     '    scanBtn.innerHTML = "&#128270; Scan";',
     '  }',
     '',
-    '  function getSelectedCount() {',
-    '    var gc = scanData.groupCounts || [];',
-    '    var total = 0;',
-    '    for (var i = 0; i < gc.length; i++) {',
-    '      if (selectedGroups.has(gc[i].name)) total += gc[i].count;',
-    '    }',
-    '    return total;',
-    '  }',
-    '',
     '  function renderResults() {',
     '    if (!scanData) return;',
     '    var data = scanData;',
     '    var total = data.totalItems || 0;',
-    '    var groups = data.groupCounts || [];',
-    '    var samples = data.groupSamples || {};',
-    '    var selCount = getSelectedCount();',
+    '    var samples = data.samples || [];',
     '    var h = "";',
     '',
     '    h += \'<div class="hero-count fade-in count-up">\';',
     '    h += \'<div class="num">\' + total.toLocaleString() + \'</div>\';',
-    '    h += \'<div class="lbl">Total Movies Found</div>\';',
-    '    h += \'<div class="sub">\' + groups.length + " catalog" + (groups.length !== 1 ? "s" : "") + \' detected in this M3U file</div>\';',
+    '    h += \'<div class="lbl">Movies Found</div>\';',
+    '    h += \'<div class="sub">Ready to add to \' + CATALOG_NAME + \'</div>\';',
     '    h += \'</div>\';',
     '',
     '    h += \'<div class="stats-row fade-in">\';',
-    '    h += sc("&#128194;", groups.length, "Catalogs", "text-blue");',
-    '    h += sc("&#127916;", total, "Total", "text-purple");',
+    '    h += sc("&#127916;", total, "Total Movies", "text-purple");',
     '    h += sc("&#128247;", data.withPoster || 0, "With Poster", "text-green");',
     '    if (data.avgRating) h += sc("&#11088;", data.avgRating, "Avg Rating", "text-yellow");',
     '    if (data.minYear && data.maxYear) h += sc("&#128197;", data.minYear + "-" + data.maxYear, "Year Range", "text-orange");',
+    '    if (data.yearCount) h += sc("&#128198;", data.yearCount, "Year Filters", "text-blue");',
     '    h += \'</div>\';',
     '',
-    '    if (groups.length > 0) {',
+    '    if (samples.length > 0) {',
     '      h += \'<div class="card fade-in">\';',
-    '      h += \'<div class="card-header"><h2>&#9745;&#65039; Select Catalogs</h2><p>Choose which group-titles to include in your Stremio addon</p></div>\';',
-    '      h += \'<div class="select-bar">\';',
-    '      h += \'<span class="sel-info" id="selInfo">\' + selectedGroups.size + \' of \' + groups.length + \' selected (\' + selCount.toLocaleString() + \' movies)</span>\';',
-    '      h += \'<span class="sel-actions">\';',
-    '      h += \'<button class="sel-btn" data-action="all">Select All</button>\';',
-    '      h += \'<button class="sel-btn" data-action="none">Select None</button>\';',
-    '      h += \'</span></div>\';',
-    '      h += \'<div style="max-height:600px;overflow-y:auto">\';',
-    '      for (var g = 0; g < groups.length; g++) {',
-    '        var grp = groups[g];',
-    '        var gid = "grp_" + g;',
-    '        var checked = selectedGroups.has(grp.name) ? " checked" : "";',
-    '        var samps = samples[grp.name] || [];',
-    '        h += \'<div class="group-item">\';',
-    '        h += \'<div class="group-header">\';',
-    '        h += \'<input type="checkbox" class="group-cb" data-group="\' + esc(grp.name) + \'" id="cb_\' + g + \'"\' + checked + \' />\';',
-    '        h += \'<button class="group-toggle" data-toggle="\' + gid + \'">\';',
-    '        h += \'<span class="group-name">&#128193; \' + esc(grp.name) + \'</span>\';',
-    '        h += \'<span class="group-count">\' + grp.count + \' movies</span>\';',
-    '        h += \'</button>\';',
-    '        h += \'</div>\';',
-    '        h += \'<div class="group-detail" id="\' + gid + \'">\';',
-    '        if (samps.length > 0) {',
-    '          h += \'<div style="font-size:.7rem;color:#555;margin-bottom:.5rem">Sample movies:</div>\';',
-    '          for (var s = 0; s < samps.length; s++) {',
-    '            var sm = samps[s];',
-    '            h += \'<div class="sample-item">\';',
-    '            if (sm.poster) {',
-    '              h += \'<img class="sample-poster" src="\' + esc(sm.poster) + \'" alt="" loading="lazy" onerror="this.style.display=\\\'none\\\'" />\';',
-    '            } else {',
-    '              h += \'<div class="sample-poster" style="display:flex;align-items:center;justify-content:center;font-size:.5rem;color:#555">&#127916;</div>\';',
-    '            }',
-    '            h += \'<span class="sample-title">\' + esc(sm.title) + \'</span>\';',
-    '            if (sm.year) h += \'<span class="sample-year">\' + sm.year + \'</span>\';',
-    '            if (sm.rating) h += \'<span class="sample-rating">&#11088; \' + sm.rating + \'</span>\';',
-    '            h += \'</div>\';',
-    '          }',
+    '      h += \'<div class="card-header"><h2>&#127916; Sample Movies (First 5)</h2><p>Preview of movies in your M3U file</p></div>\';',
+    '      h += \'<div class="card-body">\';',
+    '      for (var s = 0; s < samples.length; s++) {',
+    '        var sm = samples[s];',
+    '        h += \'<div class="sample-item">\';',
+    '        if (sm.poster) {',
+    '          h += \'<img class="sample-poster" src="\' + esc(sm.poster) + \'" alt="" loading="lazy" onerror="this.style.display=\\\'none\\\'" />\';',
+    '        } else {',
+    '          h += \'<div class="sample-poster" style="display:flex;align-items:center;justify-content:center;font-size:.6rem;color:#555">&#127916;</div>\';',
     '        }',
-    '        h += \'</div></div>\';',
+    '        h += \'<div class="sample-info">\';',
+    '        h += \'<div class="sample-title">\' + esc(sm.title) + \'</div>\';',
+    '        var meta = [];',
+    '        if (sm.year) meta.push(sm.year);',
+    '        if (sm.duration) meta.push(sm.duration);',
+    '        if (sm.genres && sm.genres.length) meta.push(sm.genres.join(", "));',
+    '        h += \'<div class="sample-meta">\' + esc(meta.join(" • ")) + \'</div>\';',
+    '        h += \'</div>\';',
+    '        if (sm.rating) h += \'<span class="sample-rating">&#11088; \' + sm.rating + \'</span>\';',
+    '        h += \'</div>\';',
     '      }',
     '      h += \'</div></div>\';',
     '    }',
     '',
-    '    h += \'<div class="selected-summary fade-in" id="selSummary">\';',
-    '    h += \'<div class="sel-num" id="selCountNum">\' + selCount.toLocaleString() + \'</div>\';',
-    '    h += \'<div class="sel-lbl">Movies in \' + selectedGroups.size + \' selected catalog\' + (selectedGroups.size !== 1 ? "s" : "") + \'</div>\';',
-    '    h += \'</div>\';',
-    '',
     '    h += \'<div style="text-align:center;margin:1.5rem 0" class="fade-in">\';',
-    '    h += \'<button class="btn btn-gen" id="generateBtn"\' + (selectedGroups.size === 0 ? " disabled" : "") + \'>&#128640; Generate Addon URL</button>\';',
-    '    h += \'<p class="hint" style="margin-top:.5rem">Only your selected catalogs will appear in Stremio</p>\';',
+    '    h += \'<button class="btn btn-gen" id="generateBtn">&#128640; Generate Addon URL</button>\';',
+    '    h += \'<p class="hint" style="margin-top:.5rem">Creates a single "\' + CATALOG_NAME + \'" catalog with year filter</p>\';',
     '    h += \'</div>\';',
     '',
     '    h += \'<div id="addonResult"></div>\';',
     '',
     '    resultsDiv.innerHTML = h;',
     '',
-    '    // Attach toggle listeners',
-    '    var toggleBtns = document.querySelectorAll("[data-toggle]");',
-    '    for (var t = 0; t < toggleBtns.length; t++) {',
-    '      toggleBtns[t].addEventListener("click", function() {',
-    '        var tid = this.getAttribute("data-toggle");',
-    '        var target = document.getElementById(tid);',
-    '        if (target) target.classList.toggle("open");',
-    '      });',
-    '    }',
-    '',
-    '    // Attach checkbox listeners',
-    '    var cbs = document.querySelectorAll(".group-cb");',
-    '    for (var c = 0; c < cbs.length; c++) {',
-    '      cbs[c].addEventListener("change", function() {',
-    '        var gname = this.getAttribute("data-group");',
-    '        if (this.checked) {',
-    '          selectedGroups.add(gname);',
-    '        } else {',
-    '          selectedGroups.delete(gname);',
-    '        }',
-    '        updateSelectionUI();',
-    '      });',
-    '    }',
-    '',
-    '    // Select All / None',
-    '    var selBtns = document.querySelectorAll("[data-action]");',
-    '    for (var sb = 0; sb < selBtns.length; sb++) {',
-    '      selBtns[sb].addEventListener("click", function() {',
-    '        var action = this.getAttribute("data-action");',
-    '        var allCbs = document.querySelectorAll(".group-cb");',
-    '        if (action === "all") {',
-    '          selectedGroups.clear();',
-    '          var gc = scanData.groupCounts || [];',
-    '          for (var i = 0; i < gc.length; i++) selectedGroups.add(gc[i].name);',
-    '          for (var i = 0; i < allCbs.length; i++) allCbs[i].checked = true;',
-    '        } else {',
-    '          selectedGroups.clear();',
-    '          for (var i = 0; i < allCbs.length; i++) allCbs[i].checked = false;',
-    '        }',
-    '        updateSelectionUI();',
-    '      });',
-    '    }',
-    '',
     '    var genBtn = document.getElementById("generateBtn");',
     '    if (genBtn) genBtn.addEventListener("click", doGenerate);',
-    '  }',
-    '',
-    '  function updateSelectionUI() {',
-    '    var selCount = getSelectedCount();',
-    '    var infoEl = document.getElementById("selInfo");',
-    '    var groups = scanData.groupCounts || [];',
-    '    if (infoEl) infoEl.textContent = selectedGroups.size + " of " + groups.length + " selected (" + selCount.toLocaleString() + " movies)";',
-    '    var numEl = document.getElementById("selCountNum");',
-    '    if (numEl) numEl.textContent = selCount.toLocaleString();',
-    '    var summaryEl = document.getElementById("selSummary");',
-    '    if (summaryEl) {',
-    '      var lbl = summaryEl.querySelector(".sel-lbl");',
-    '      if (lbl) lbl.textContent = "Movies in " + selectedGroups.size + " selected catalog" + (selectedGroups.size !== 1 ? "s" : "");',
-    '    }',
-    '    var genBtn = document.getElementById("generateBtn");',
-    '    if (genBtn) genBtn.disabled = selectedGroups.size === 0;',
     '  }',
     '',
     '  function sc(icon, val, label, cls) {',
@@ -1100,7 +910,7 @@ function getScript() {
     '    var m3uUrl = m3uInput.value.trim();',
     '    var tmdbKeyEl = document.getElementById("tmdbKey");',
     '    var tmdbKey = tmdbKeyEl ? tmdbKeyEl.value.trim() : "";',
-    '    if (!m3uUrl || selectedGroups.size === 0) return;',
+    '    if (!m3uUrl) return;',
     '',
     '    var genBtn = document.getElementById("generateBtn");',
     '    if (genBtn) {',
@@ -1109,7 +919,7 @@ function getScript() {
     '    }',
     '',
     '    try {',
-    '      var body = { m3uUrl: m3uUrl, groups: Array.from(selectedGroups) };',
+    '      var body = { m3uUrl: m3uUrl };',
     '      if (tmdbKey) body.tmdbKey = tmdbKey;',
     '',
     '      var resp = await fetch("/api/config", {',
@@ -1128,9 +938,8 @@ function getScript() {
     '',
     '      setStep(3);',
     '',
-    '      var selCount = getSelectedCount();',
     '      var rh = \'<div class="card addon-card fade-in">\';',
-    '      rh += \'<div class="card-header"><h2>&#127881; Your Addon is Ready!</h2><p>\' + selCount + \' movies from \' + selectedGroups.size + \' catalog\' + (selectedGroups.size !== 1 ? "s" : "") + \'</p></div>\';',
+    '      rh += \'<div class="card-header"><h2>&#127881; Your Addon is Ready!</h2><p>\' + scanData.totalItems + \' movies in \' + CATALOG_NAME + \'</p></div>\';',
     '      rh += \'<div class="card-body">\';',
     '',
     '      rh += \'<label>Manifest URL</label>\';',
@@ -1141,19 +950,11 @@ function getScript() {
     '',
     '      rh += \'<p style="text-align:center;font-size:.75rem;color:#555;margin-top:.75rem">Or paste the manifest URL in Stremio &rarr; Addons &rarr; Search bar</p>\';',
     '',
-    '      rh += \'<div style="margin-top:1rem;padding:.75rem;background:rgba(139,92,246,.04);border:1px solid rgba(139,92,246,.1);border-radius:.5rem">\';',
-    '      rh += \'<div style="font-size:.75rem;font-weight:700;color:#a78bfa;margin-bottom:.5rem">&#128194; Selected Catalogs:</div>\';',
-    '      var arr = Array.from(selectedGroups);',
-    '      for (var i = 0; i < arr.length; i++) {',
-    '        var gc = scanData.groupCounts || [];',
-    '        var cnt = 0;',
-    '        for (var j = 0; j < gc.length; j++) { if (gc[j].name === arr[i]) cnt = gc[j].count; }',
-    '        rh += \'<div style="font-size:.72rem;color:#888;padding:.2rem 0">&#9745; \' + esc(arr[i]) + \' <span style="color:#a78bfa">(\' + cnt + \')</span></div>\';',
-    '      }',
-    '      rh += \'</div>\';',
-    '',
-    '      rh += \'<div class="info-box"><h4>&#128161; Change source or catalogs anytime</h4>\';',
-    '      rh += \'<p>Come back here, enter a new URL or select different catalogs, and generate a new addon URL. Each configuration gets a unique URL.</p></div>\';',
+    '      rh += \'<div class="info-box"><h4>&#128161; Features</h4>\';',
+    '      rh += \'<p>&#8226; Single catalog: \' + CATALOG_NAME + \'<br>\';',
+    '      rh += \'&#8226; Year filter in Stremio Discover<br>\';',
+    '      rh += \'&#8226; New movies at top of M3U appear first<br>\';',
+    '      rh += \'&#8226; Auto-refresh every 6 hours</p></div>\';',
     '',
     '      rh += \'</div></div>\';',
     '',
@@ -1185,7 +986,7 @@ function getScript() {
     '  function resetGen() {',
     '    var genBtn = document.getElementById("generateBtn");',
     '    if (genBtn) {',
-    '      genBtn.disabled = selectedGroups.size === 0;',
+    '      genBtn.disabled = false;',
     '      genBtn.innerHTML = "&#128640; Generate Addon URL";',
     '    }',
     '  }',
@@ -1198,7 +999,7 @@ function getScript() {
 // ── Start Server ────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", function() {
   console.log("============================================");
-  console.log("  M3U Stremio Addon Server v3.0");
+  console.log("  " + CATALOG_NAME + " Server v3.0");
   console.log("  PORT:       " + PORT);
   console.log("  Render URL: " + (RENDER_URL || "N/A"));
   console.log("  TMDB key:   " + (DEFAULT_TMDB ? "YES" : "NO"));
