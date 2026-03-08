@@ -26,7 +26,7 @@ function decodeConfig(str) {
 }
 
 // ══════════════════════════════════════════════════════════
-//  BULLETPROOF M3U PARSER
+//  BULLETPROOF M3U PARSER (Fixed for multi-line EXTINF)
 // ══════════════════════════════════════════════════════════
 
 function parseM3U(raw) {
@@ -39,28 +39,37 @@ function parseM3U(raw) {
     var line = lines[i];
     var trimmed = line.trim();
 
+    // Skip empty lines and known comments
+    if (trimmed === "" || trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXTVLCOPT")) {
+      continue;
+    }
+
+    // Start of new EXTINF
     if (trimmed.startsWith("#EXTINF:")) {
       curExtInf = trimmed;
-    } else if (curExtInf !== null) {
-      if (/^https?:\/\//i.test(trimmed)) {
-        var item = parseExtInf(curExtInf);
-        if (item) {
-          item.streamUrl = trimmed;
-          item.id = makeId(item, insertionIndex);
-          item.insertionIndex = insertionIndex;
-          items.push(item);
-          insertionIndex++;
-        }
-        curExtInf = null;
-      } else if (trimmed === "" || trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXTVLCOPT")) {
-        // skip
-      } else if (trimmed.startsWith("#EXTINF:")) {
+    }
+    // URL line - ends current EXTINF
+    else if (curExtInf !== null && /^https?:\/\//i.test(trimmed)) {
+      var item = parseExtInf(curExtInf);
+      if (item) {
+        item.streamUrl = trimmed;
+        item.id = makeId(item, insertionIndex);
+        item.insertionIndex = insertionIndex;
+        items.push(item);
+        insertionIndex++;
+      }
+      curExtInf = null;
+    }
+    // Continuation line - append to current EXTINF
+    else if (curExtInf !== null) {
+      if (trimmed.startsWith("#EXTINF:")) {
+        // New EXTINF before URL = discard previous incomplete one
         curExtInf = trimmed;
-      } else if (trimmed.startsWith("#")) {
-        // skip other comments
-      } else {
+      } else if (!trimmed.startsWith("#")) {
+        // Append non-comment lines to current EXTINF
         curExtInf = curExtInf + " " + trimmed;
       }
+      // Skip other comment lines
     }
   }
 
@@ -146,7 +155,7 @@ function parseDisplayName(name) {
   if (genreMatch) {
     var genreStr = genreMatch[1];
     var genres = genreStr.split(/[\\/|,]/).map(function(g) { return g.trim(); }).filter(Boolean);
-    var knownLangs = ["Hindi","Tamil","Telugu","Malayalam","Kannada","Bengali","English","Korean","Japanese","Marathi","Punjabi","Gujarati","Urdu","Chinese","Spanish","French","German","Italian","Portuguese","Arabic","Turkish","Thai","Vietnamese","Indonesian","Malay","Filipino"];
+    var knownLangs = ["Hindi","Tamil","Telugu","Malayalam","Kannada","Bengali","English","Korean","Japanese","Marathi","Punjabi","Gujarati","Urdu","Chinese","Spanish","French","German","Italian","Portuguese","Arabic","Turkish","Thai","Vietnamese","Indonesian","Malay","Filipino","Odia","Assamese"];
     var filteredGenres = [];
     for (var i = 0; i < genres.length; i++) {
       var isLang = knownLangs.some(function(l) { return l.toLowerCase() === genres[i].toLowerCase(); });
@@ -256,21 +265,27 @@ async function getSource(m3uUrl) {
       if (!catalogMap[g]) catalogMap[g] = [];
       catalogMap[g].push(items[i]);
     }
+
+    // Get group titles
+    var groupTitles = Object.keys(catalogMap).sort();
+
+    // Sort by insertion order ASCENDING (first in M3U = first in list)
+    // This means newly added items at TOP of M3U will appear FIRST
     for (var g2 of Object.keys(catalogMap)) {
       catalogMap[g2].sort(function(a, b) {
-        return b.insertionIndex - a.insertionIndex;
+        return a.insertionIndex - b.insertionIndex;
       });
     }
     items.sort(function(a, b) {
-      return b.insertionIndex - a.insertionIndex;
+      return a.insertionIndex - b.insertionIndex;
     });
 
-    // Collect years for filter
+    // Collect years for filter (newest year first in dropdown)
     var yearSet = {};
     for (var j = 0; j < items.length; j++) {
       if (items[j].year) yearSet[items[j].year] = true;
     }
-    var years = Object.keys(yearSet).map(Number).sort(function(a, b) { return b - a; }); // newest first
+    var years = Object.keys(yearSet).map(Number).sort(function(a, b) { return b - a; });
 
     var result = {
       items: items, catalogMap: catalogMap,
@@ -301,6 +316,12 @@ function filterSource(source, selectedGroups) {
     }
   }
   filteredTitles.sort();
+  
+  // Re-sort filtered items by insertion index
+  filteredItems.sort(function(a, b) {
+    return a.insertionIndex - b.insertionIndex;
+  });
+  
   return {
     items: filteredItems,
     catalogMap: filteredMap,
@@ -389,30 +410,40 @@ function groupIdToKey(catalogId, groupTitles) {
 
 function buildManifest(source) {
   var items = source.items;
-  var catalogMap = source.catalogMap;
-  var groupTitles = source.groupTitles;
   var years = source.years || [];
 
-  // Year options as strings for Stremio genre filter
-  var yearOptions = years.map(function(y) { return String(y); }).sort(function(a, b) { return b - a; });
+  // Year options as strings for Stremio filter (newest first)
+  var yearOptions = years.map(function(y) { return String(y); });
 
   var catalogs = [];
   if (items.length > 0) {
     var allExtra = [{ name: "skip", isRequired: false }];
+    
+    // Add ONLY year filter (Stremio uses "genre" field for custom filters)
     if (yearOptions.length > 0) {
-      allExtra.unshift({ name: "genre", isRequired: false, options: yearOptions });
+      allExtra.unshift({ 
+        name: "genre", 
+        isRequired: false, 
+        options: yearOptions 
+      });
     }
+    
     catalogs.push({
-      type: "movie", id: "m3u_all", name: "All Movies (" + items.length + ")",
+      type: "movie", 
+      id: "m3u_all", 
+      name: "All Movies (" + items.length + ")",
       extra: allExtra
     });
   }
+  
   return {
-    id: "community.m3u.stremio.addon", version: "3.0.0",
+    id: "community.m3u.stremio.addon", 
+    version: "3.0.0",
     name: "M3U Stremio Addon",
-    description: "Stream " + items.length + " titles from M3U playlists — Latest first",
+    description: "Stream " + items.length + " titles from M3U playlists",
     logo: "https://img.icons8.com/color/512/popcorn-time.png",
-    resources: ["catalog", "meta", "stream"], types: ["movie"],
+    resources: ["catalog", "meta", "stream"], 
+    types: ["movie"],
     catalogs: catalogs,
     behaviorHints: { adult: false, configurable: true, configurationRequired: false },
     idPrefixes: ["m3u_"],
@@ -536,7 +567,7 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async function(req, res) {
     var skip = parseInt(extras.skip, 10) || 0;
     var limit = 100;
 
-    // Get items — already sorted by year desc, then insertion desc
+    // Get items - already sorted by insertion order (ascending)
     var items;
     if (id === "m3u_all") {
       items = source.items.slice();
@@ -545,7 +576,7 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async function(req, res) {
       items = groupKey ? (source.catalogMap[groupKey] || []).slice() : [];
     }
 
-    // YEAR FILTER ONLY
+    // Apply YEAR filter only
     if (yearFilter) {
       var filterYear = parseInt(yearFilter, 10);
       if (!isNaN(filterYear)) {
@@ -555,8 +586,7 @@ app.get("/:config/catalog/:type/:id/:extra?.json", async function(req, res) {
       }
     }
 
-    // Items are already sorted
-    // No re-sorting needed
+    // NO re-sorting - maintain insertion order from M3U file
 
     var page = items.slice(skip, skip + limit);
     var metas = [];
@@ -634,6 +664,7 @@ function startKeepAlive() {
   }, KEEP_ALIVE_MS);
 }
 
+// ── Cache cleanup ───────────────────────────────────────
 setInterval(function() {
   var cutoff = Date.now() - 24 * 3600000;
   for (var url of Object.keys(sourceCache)) {
