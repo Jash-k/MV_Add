@@ -258,27 +258,31 @@ async function getSource(m3uUrl) {
     }
     for (var g2 of Object.keys(catalogMap)) {
       catalogMap[g2].sort(function(a, b) {
-        var ay = a.year || 0;
-        var by = b.year || 0;
-        if (ay !== by) return by - ay;
         return b.insertionIndex - a.insertionIndex;
       });
     }
     items.sort(function(a, b) {
-      var ay = a.year || 0;
-      var by = b.year || 0;
-      if (ay !== by) return by - ay;
       return b.insertionIndex - a.insertionIndex;
     });
-    var groupTitles = Object.keys(catalogMap).sort();
-    var result = { items: items, catalogMap: catalogMap, groupTitles: groupTitles, ts: now };
+
+    // Collect years for filter
+    var yearSet = {};
+    for (var j = 0; j < items.length; j++) {
+      if (items[j].year) yearSet[items[j].year] = true;
+    }
+    var years = Object.keys(yearSet).map(Number).sort(function(a, b) { return b - a; }); // newest first
+
+    var result = {
+      items: items, catalogMap: catalogMap,
+      groupTitles: groupTitles, years: years, ts: now
+    };
     sourceCache[m3uUrl] = result;
     console.log("[M3U]", items.length, "items in", groupTitles.length, "groups:", groupTitles.join(", "));
     return result;
   } catch (err) {
     console.error("[M3U] Fetch error:", err.message);
     if (cached) return cached;
-    return { items: [], catalogMap: {}, groupTitles: [], ts: now };
+    return { items: [], catalogMap: {}, groupTitles: [], years: [], ts: now };
   }
 }
 
@@ -301,6 +305,7 @@ function filterSource(source, selectedGroups) {
     items: filteredItems,
     catalogMap: filteredMap,
     groupTitles: filteredTitles,
+    years: source.years,
     ts: source.ts
   };
 }
@@ -389,7 +394,7 @@ function buildManifest(source) {
   var years = source.years || [];
 
   // Year options as strings for Stremio genre filter
-  var yearOptions = years.map(function(y) { return String(y); });
+  var yearOptions = years.map(function(y) { return String(y); }).sort(function(a, b) { return b - a; });
 
   var catalogs = [];
   if (items.length > 0) {
@@ -405,7 +410,7 @@ function buildManifest(source) {
   return {
     id: "community.m3u.stremio.addon", version: "3.0.0",
     name: "M3U Stremio Addon",
-    description: "Stream " + items.length + " titles from M3U playlists — Year filter, Latest first",
+    description: "Stream " + items.length + " titles from M3U playlists — Latest first",
     logo: "https://img.icons8.com/color/512/popcorn-time.png",
     resources: ["catalog", "meta", "stream"], types: ["movie"],
     catalogs: catalogs,
