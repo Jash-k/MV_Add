@@ -46,7 +46,7 @@ function parseM3U(raw) {
         var item = parseExtInf(curExtInf);
         if (item) {
           item.streamUrl = trimmed;
-          item.id = makeId(item);
+          item.id = makeId(item, insertionIndex);
           item.insertionIndex = insertionIndex;
           items.push(item);
           insertionIndex++;
