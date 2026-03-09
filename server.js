@@ -29,7 +29,7 @@ function decodeConfig(str) {
 }
 
 // ══════════════════════════════════════════════════════════
-//  BULLETPROOF M3U PARSER (Fixed for multi-line EXTINF)
+//  BULLETPROOF M3U PARSER (Fixed group matching + #EXTHTTP)
 // ══════════════════════════════════════════════════════════
 
 function parseM3U(raw) {
@@ -42,8 +42,18 @@ function parseM3U(raw) {
     var line = lines[i];
     var trimmed = line.trim();
 
-    // Skip empty lines and known comments
-    if (trimmed === "" || trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXTVLCOPT")) {
+    // Skip empty lines and known non-EXTINF comment/directive lines
+    if (
+      trimmed === "" ||
+      trimmed.startsWith("#EXTM3U") ||
+      trimmed.startsWith("#EXTVLCOPT") ||
+      trimmed.startsWith("#EXTHTTP")          // ★ FIX: skip #EXTHTTP lines
+    ) {
+      continue;
+    }
+
+    // ★ FIX: skip separator/decoration lines like _________VT 🎬 | Tamil Movies_______
+    if (/^[_=\-─━─]{3,}/.test(trimmed)) {
       continue;
     }
 
@@ -51,7 +61,7 @@ function parseM3U(raw) {
     if (trimmed.startsWith("#EXTINF:")) {
       curExtInf = trimmed;
     }
-    // URL line - ends current EXTINF
+    // URL line — ends current EXTINF
     else if (curExtInf !== null && /^https?:\/\//i.test(trimmed)) {
       var item = parseExtInf(curExtInf);
       if (item) {
@@ -63,16 +73,13 @@ function parseM3U(raw) {
       }
       curExtInf = null;
     }
-    // Continuation line - append to current EXTINF
+    // Continuation of current EXTINF (multi-line support)
     else if (curExtInf !== null) {
       if (trimmed.startsWith("#EXTINF:")) {
-        // New EXTINF before URL = discard previous incomplete one
         curExtInf = trimmed;
       } else if (!trimmed.startsWith("#")) {
-        // Append non-comment lines to current EXTINF
         curExtInf = curExtInf + " " + trimmed;
       }
-      // Skip other comment lines
     }
   }
 
@@ -93,8 +100,9 @@ function parseExtInf(line) {
   var group = attrs["group-title"] || "";
   var type = attrs["type"] || "movie";
 
-  // Strict parsing: only accept items from "VT 🎬 | Tamil Movies" group
-  if (group !== "VT 🎬 | Tamil Movies") return null;
+  // ★ FIX: Use regex to match group-title flexibly
+  // Handles "VT 🎬| Tamil Movies" and "VT 🎬 | Tamil Movies" and similar spacing
+  if (!/VT\s*🎬\s*\|\s*Tamil\s*Movies/i.test(group)) return null;
 
   var rawName = "";
   var lastQuoteIdx = -1;
@@ -114,6 +122,9 @@ function parseExtInf(line) {
     var ci = line.lastIndexOf(",");
     if (ci !== -1) rawName = line.substring(ci + 1).trim();
   }
+
+  // ★ FIX: Skip separator/placeholder entries like "#AAY" that link to dummy URLs
+  if (!rawName || /^#+\s*[A-Z]{2,4}$/i.test(rawName)) return null;
 
   var parsed = parseDisplayName(rawName);
   return {
